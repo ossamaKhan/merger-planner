@@ -1,0 +1,29 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Franchise Planner{% endblock %} · MergeCo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'planner/planner.css' %}?v=20261112">
+  {% block head %}{% endblock %}
+</head>
+<body class="{% block bodyclass %}{% endblock %}">
+<nav class="topnav">
+  <a class="brand" href="{% url 'home' %}"><span class="dot dot-o"></span><span class="dot dot-b"></span> Franchise Planner</a>
+  <a href="{% url 'home' %}">Scenarios</a>
+  <a href="{% url 'upload' %}">Upload data</a>
+  <a href="{% url 'compare' %}">Compare</a>
+  <a href="{% url 'boundaries' %}">Boundaries</a>
+  <a href="{% url 'backup' %}">Backup</a>
+  <a href="{% url 'admin:index' %}">Admin</a>
+  <span class="spacer"></span>
+  {% block navright %}{% endblock %}
+</nav>
+{% if messages %}<div class="flash-wrap">{% for m in messages %}<div class="flash flash-{{ m.tags }}">{{ m }}</div>{% endfor %}</div>{% endif %}
+{% block content %}{% endblock %}
+<script src="{% static 'planner/chunked.js' %}?v=20261112"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

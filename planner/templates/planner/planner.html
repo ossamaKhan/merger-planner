@@ -1,0 +1,203 @@
+{% extends "planner/base.html" %}
+{% load static %}
+{% block title %}{{ scenario.name }}{% endblock %}
+{% block bodyclass %}app{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{% static 'planner/vendor/leaflet.css' %}">
+{% endblock %}
+{% block navright %}
+  <input id="scName" class="title-input" value="{{ scenario.name }}" title="Rename scenario">
+  <form method="post" action="{% url 'scenario_clone' scenario.pk %}">{% csrf_token %}<button class="btn-ghost sm" title="Copy this plan to try a variant">Clone</button></form>
+  <a id="btnReport" class="btn sm" href="{% url 'report' scenario.pk %}" title="Merged franchise tables, pre/post maps and complete KML">Report &amp; KML</a>
+  <a id="btnXlsx" class="btn-ghost sm" href="#" title="Excel of the current view">Excel</a>
+  <a id="btnKml" class="btn-ghost sm" href="#" title="KML of the current view only">KML (view)</a>
+{% endblock %}
+{% block content %}
+{% csrf_token %}
+<div id="app" data-scenario="{{ scenario.pk }}"
+     data-km="{{ scenario.coverage_km }}" data-bydist="{{ scenario.fill_within_district|yesno:'1,0' }}"
+     data-method="{{ scenario.projection_method }}" data-real="{{ scenario.realization_pct }}">
+
+  <!-- 1. scope + months -->
+  <div class="controlbar">
+    <div class="ctl nav">
+      <span id="companyCtl"></span>
+      <select id="selRegion" title="Limit the list to one region"></select>
+      <span class="lbl">Work at</span>
+      <div class="seg" id="levelSeg"><button data-v="arm">ASM</button><button data-v="bm">BM</button><button data-v="tehsil">City</button><button data-v="district">District</button><button data-v="region">Region</button></div>
+      <button id="uPrev" class="btn-ghost sm" title="Previous">◀</button>
+      <select id="selUnit"></select>
+      <button id="uNext" class="btn-ghost sm" title="Next">▶</button>
+      <button id="btnDone" class="btn sm">✓ Reviewed, next</button>
+      <span id="progress" class="progress"></span>
+    </div>
+    <div class="ctl">
+      <span class="lbl">Months</span>
+      <div id="monthChips" class="chips"></div>
+      <button id="mAll" class="btn-ghost xs">All</button>
+      <button id="mLatest" class="btn-ghost xs">Latest</button>
+    </div>
+    <div class="ctl">
+      <div class="seg" id="aggSeg"><button data-v="avg" title="Monthly average across selected months">Avg / month</button><button data-v="sum" title="Sum across selected months">Period total</button></div>
+    </div>
+    <span class="spacer"></span>
+    <span id="status" class="status"></span>
+    <button id="btnSettings" class="btn-ghost sm">⚙ Settings</button>
+  </div>
+
+  <!-- settings drawer -->
+  <div id="settings" class="settings hidden">
+    <label>Site coverage radius <span><input id="km" type="number" min="0.1" max="50" step="0.1" class="num"> km</span></label>
+    <label>Fill uncovered islands
+      <select id="bydist"><option value="1">with nearest franchise in the same district</option><option value="0">with nearest franchise anywhere</option></select></label>
+    <label>Planning area
+      <select id="clip"><option value="district">full district polygon</option><option value="hull">only the area around the sites</option></select></label>
+    <label>Projection
+      <select id="method"><option value="best">lift towards best member's per-site productivity</option><option value="avg">lift towards area average per site</option><option value="none">no uplift (plain sum)</option></select></label>
+    <label>Gap expected to close <span><input id="real" type="number" min="0" max="100" step="5" class="num"> %</span></label>
+    <button id="btnApplySettings" class="btn sm">Apply</button>
+  </div>
+
+  <div class="workspace">
+    <!-- side panel -->
+    <aside class="side">
+      <div class="tabs" id="sideTabs">
+        <button data-t="board" class="on">Merge board</button>
+        <button data-t="dive">Deep dive</button>
+        <button data-t="tree">Hierarchy</button>
+        <button data-t="islands">Islands <span id="strayCount" class="pill warnpill"></span></button>
+        <button data-t="issues">Issues <span id="issueCount" class="pill"></span></button>
+      </div>
+
+      <div class="tab" id="tab-board">
+        <ol class="howto">
+          <li>Pick a level and unit at the top. Start with <b>ASM</b>, then BM, City, District, Region.</li>
+          <li><b>Drag</b> a franchise chip onto another box, or use <b>Tag</b> below. <b>×</b> undoes it.</li>
+          <li>Press <b>✓ Reviewed, next</b>. Everything saves automatically.</li>
+        </ol>
+        <div class="tagform">
+          <div class="tf-row"><span class="lbl">Tag</span><select id="tfFrom"></select><span class="arr">→</span><select id="tfTo"></select></div>
+          <div class="tf-row" id="tfScope"></div>
+          <button id="tfGo" class="btn sm">Tag</button>
+        </div>
+        <div class="plan-tools">
+          <input id="boardSearch" placeholder="Find franchise…" class="search">
+          <button id="btnNewFr" class="btn-ghost sm" title="Create a new post-merger franchise code">+ New franchise</button>
+        </div>
+        <div id="board" class="board"></div>
+        <div class="plan-foot">
+          <button id="btnSeed" class="btn-ghost sm" title="Tag every franchise to its majority 'Franchise ID After MOCAN'">Seed from MOCAN</button>
+          <span class="spacer"></span>
+          <button id="btnUndo" class="btn-ghost sm" title="Undo last board change">↶ Undo</button>
+          <button id="btnResetAll" class="btn-ghost sm danger">Reset plan</button>
+        </div>
+      </div>
+
+      <div class="tab hidden" id="tab-dive">
+        <select id="diveSel" class="search"></select>
+        <div id="dive"><div class="muted pad">Pick a planned franchise above, or click one on the POST map, the board or the table.</div></div>
+      </div>
+
+      <div class="tab hidden" id="tab-tree">
+        <div class="seg small-seg" id="treeSide"><button data-v="post" class="on">Post plan</button><button data-v="pre">Current</button></div>
+        <div class="muted small pad">Region → District → Tehsil/City → Franchise → member franchises.</div>
+        <div id="hierTree" class="tree"></div>
+      </div>
+
+      <div class="tab hidden" id="tab-islands"><div id="strays"></div></div>
+      <div class="tab hidden" id="tab-issues"><div id="issues"></div></div>
+    </aside>
+
+    <!-- main -->
+    <section class="main">
+      <div class="cards" id="cards"></div>
+
+      <div class="maps-head">
+        <div class="layer-toggles" id="layerToggles">
+          <label><input type="checkbox" data-l="terr" checked> Territories</label>
+          <label><input type="checkbox" data-l="sites" checked> Sites</label>
+          <label><input type="checkbox" data-l="labels" checked> Labels</label>
+          <label title="Grey: territory of sites outside the current filter"><input type="checkbox" data-l="context" checked> Outside view</label>
+          <span class="tg-sep">Borders:</span>
+          <label><input type="checkbox" data-l="u_arm"> ASM</label>
+          <label><input type="checkbox" data-l="u_bm"> BM</label>
+          <label><input type="checkbox" data-l="u_tehsil"> City</label>
+          <label><input type="checkbox" data-l="districts" checked> District</label>
+          <label><input type="checkbox" data-l="u_region"> Region</label>
+          <label title="Sites sitting inside another franchise's area (red rings)"><input type="checkbox" data-l="strays" checked> Islands</label>
+          <label title="Neighbourhood / town names (Cantt, Gulgasht…) on top of the colours — zoom in to see them"><input type="checkbox" data-l="names" checked> Area names</label>
+          <span id="cmpToggles"></span>
+          <span class="tg-sep">Extra:</span>
+          <label title="Area beyond the site radius, shown faded (it is still filled by the nearest franchise)"><input type="checkbox" data-l="fill"> Beyond-radius shading</label>
+          <label><input type="checkbox" data-l="circles"> Coverage circles</label>
+          <label><input type="checkbox" data-l="tehsils"> Tehsil polygons</label>
+        </div>
+        <span class="spacer"></span>
+        <span id="opCtl"></span>
+        <span class="areafind"><input id="areaFind" class="search" placeholder="🔍 Find area (Cantt, Gulgasht…)"><div id="areaHits" class="areahits hidden"></div></span>
+        <button id="btnAddArea" class="btn-ghost sm" title="Add your own neighbourhood / area name: click, then click the map">＋ Area name</button>
+        <button id="btnMapSize" class="btn-ghost sm">⤢ Bigger maps</button>
+      </div>
+
+      <!-- site re-assignment toolbar -->
+      <div class="assignbar" id="assignBar">
+        <span class="lbl">Move sites</span>
+        <select id="paintTarget"><option value="">— pick target franchise —</option></select>
+        <div class="seg small-seg" id="paintMode"><button data-v="click" class="on" title="Click sites one by one">Click sites</button><button data-v="box" title="Drag a box over many sites">Drag a box</button></div>
+        <span id="paintHint" class="muted small">Pick a target, then click sites on the POST map.</span>
+        <span class="spacer"></span>
+        <span id="pendingN" class="pending hidden"></span>
+        <button id="btnPendSave" class="btn sm hidden">Save moves</button>
+        <button id="btnPendDiscard" class="btn-ghost sm hidden">Discard</button>
+      </div>
+
+      <div class="maps" id="maps">
+        <div class="mapbox"><div class="maptitle">PRE · current <span id="preCount"></span></div><div id="mapPre" class="map"></div></div>
+        <div class="mapbox"><div class="maptitle">POST · plan <span id="postCount"></span></div><div id="mapPost" class="map"></div></div>
+      </div>
+      <div id="legend" class="legend"></div>
+      <div id="outside" class="outside hidden"></div>
+
+      <div class="panel" id="consPanel">
+        <div class="panel-head">
+          <h3>Consolidated IDs <span class="live">● live</span></h3>
+          <span class="muted small" id="consNote"></span>
+          <span class="spacer"></span>
+          <span class="lbl">Group by</span>
+          <div class="seg small-seg" id="consBy"><button data-v="region">Region</button><button data-v="bm">BM</button><button data-v="arm" class="on">ASM</button><button data-v="district">District</button><button data-v="tehsil">City</button><button data-v="none">No grouping</button></div>
+          <label class="small"><input type="checkbox" id="consAll"> also single (unmerged) IDs</label>
+          <button id="consCsv" class="btn-ghost sm">⬇ CSV</button>
+        </div>
+        <div class="tblwrap tall-tbl"><table class="tbl sticky cons" id="consTable"></table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Franchise impact</h3>
+          <span class="spacer"></span>
+          <label class="muted small">Chart KPI <select id="kpiSel"></select></label>
+          <div class="seg small-seg" id="tblSide"><button data-v="post" class="on">Post plan</button><button data-v="pre">Current</button></div>
+          <button id="btnCols" class="btn-ghost sm">Columns</button>
+        </div>
+        <div id="colPicker" class="colpicker hidden"></div>
+        <div class="tblwrap"><table class="tbl sticky" id="frTable"></table></div>
+      </div>
+
+      <div class="chart-grid">
+        <div class="panel"><h3 id="chMixTitle">What merges into what</h3><div class="chartbox tall"><canvas id="chMix"></canvas></div></div>
+        <div class="panel"><h3>Sites per franchise — current vs plan</h3><div class="chartbox tall"><canvas id="chDist"></canvas></div></div>
+        <div class="panel"><h3 id="chTrendTitle">Monthly trend</h3><div class="chartbox"><canvas id="chTrend"></canvas></div></div>
+        <div class="panel"><h3>Scope totals: baseline vs projected</h3><div class="tblwrap short"><table class="tbl" id="totTable"></table></div></div>
+      </div>
+    </section>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+  <div id="modal" class="modal hidden"><div class="modal-box"><div id="modalBody"></div><div id="modalBtns" class="modal-btns"></div></div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{% static 'planner/vendor/leaflet.js' %}"></script>
+<script src="{% static 'planner/vendor/chart.umd.min.js' %}"></script>
+<script src="{% static 'planner/sites.js' %}?v=20261112"></script>
+<script src="{% static 'planner/planner.js' %}?v=20261112"></script>
+{% endblock %}

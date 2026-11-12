@@ -1,0 +1,139 @@
+{% extends "planner/base.html" %}
+{% load static %}
+{% block title %}Boundaries{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{% static 'planner/vendor/leaflet.css' %}">
+{% endblock %}
+{% block content %}
+{% csrf_token %}
+<main class="page report" id="bnd">
+  <section class="card">
+    <h1>Boundaries — PTA districts &amp; competitor comparison</h1>
+    <p class="muted">District borders in use: <b>{{ source }}</b>.
+      Load PTA's district KMZ to make it the official border for tagging sites and drawing territories.
+      Load another operator's KMZ (e.g. Zong) to compare it with your plan.</p>
+  </section>
+
+  <div class="grid-2">
+    <section class="card">
+      <h2>1 · Load a KML / KMZ</h2>
+      <form method="post" action="{% url 'boundary_upload' %}" enctype="multipart/form-data" class="form">
+        {% csrf_token %}
+        <label>File <input type="file" name="file" accept=".kmz,.kml" required></label>
+        <label class="radio"><input type="radio" name="role" value="districts" checked> <span><b>PTA district borders</b>: becomes the official district map. Every site is re-tagged and territories stay inside these borders.</span></label>
+        <label class="radio"><input type="radio" name="role" value="compare"> <span><b>Comparison layer</b>: e.g. Zong Central B territories or sites, to compare with your plan.</span></label>
+        <label>Name <input name="label" placeholder="e.g. PTA districts 2026 / Zong Central B"></label>
+        <button class="btn">Load file</button>
+      </form>
+      <p class="muted small">Any export works: names can be in the placemark name, the data fields, the description table or the folder.
+        Borders drawn as lines are turned into areas. Point files (one point per site) are grouped into territories by a field you choose.</p>
+    </section>
+
+    <section class="card">
+      <h2>2 · Loaded files</h2>
+      {% for l in layers %}
+      <div class="layer {% if l.role == 'districts' and l.active %}on{% endif %}">
+        <div class="lh"><b>{{ l.label }}</b>
+          <span class="tag">{% if l.role == 'districts' %}PTA districts{% if l.active %} · IN USE{% endif %}{% else %}comparison{% endif %}</span>
+          <span class="spacer"></span>
+          {% if l.role == 'districts' and not l.active %}<form method="post" action="{% url 'boundary_activate' l.pk %}">{% csrf_token %}<button class="btn-ghost xs">Use this one</button></form>{% endif %}
+          <form method="post" action="{% url 'boundary_delete' l.pk %}" onsubmit="return confirm('Remove {{ l.label|escapejs }}?')">{% csrf_token %}<button class="btn-ghost xs danger">Remove</button></form>
+        </div>
+        <div class="muted small">{{ l.source_file }} · {% for k, v in l.counts.items %}{{ v }} {{ k }}{% if v != 1 %}s{% endif %}{% if not forloop.last %}, {% endif %}{% endfor %} · {{ l.features.count }} named {% if l.role == 'districts' %}districts{% else %}areas/points{% endif %}</div>
+        <form method="post" action="{% url 'boundary_field' l.pk %}" class="lf">{% csrf_token %}
+          <span class="small">Names come from</span>
+          <select name="name_field">{% for f in l.fields %}<option value="{{ f.field }}" {% if f.field == l.name_field %}selected{% endif %}>{{ f.field }} — e.g. {{ f.samples|slice:":3"|join:", " }} ({{ f.distinct }} different)</option>{% endfor %}</select>
+          <button class="btn-ghost xs">Apply</button>
+        </form>
+      </div>
+      {% empty %}
+      <p class="muted">Nothing loaded yet. Until you load PTA's file, the built-in OCHA / PBS district borders are used.</p>
+      {% endfor %}
+    </section>
+  </div>
+
+  <section class="card" id="areas">
+    <h2>Area / neighbourhood names (Cantt, Gulgasht, Model Town…)</h2>
+    <p class="small">Every site is labelled with the area it sits in, shown on the maps, in site pop-ups, the Islands list, the Consolidated table, Excel and KML.
+      Built in: ~73,000 neighbourhoods, towns and villages across Punjab (Who's On First / GeoNames). City neighbourhoods are patchy there, so <b>add your own</b>:
+      they always win. Three ways:</p>
+    <ol class="small">
+      <li><b>On the planner map</b>: click <b>＋ Area name</b> above the maps, click the spot, type the name (e.g. <i>Gulgasht</i>).</li>
+      <li><b>Excel / CSV</b> with columns <code>Name, Latitude, Longitude</code> (and optional <code>City</code>) — one row per area.</li>
+      <li><b>KML / KMZ</b> from Google Earth or My Maps: drop a pin or draw a shape per area and name it. Sites inside a shape get that name; pins name sites within 2 km.</li>
+    </ol>
+    <form method="post" action="{% url 'area_upload' %}" enctype="multipart/form-data" class="row">
+      {% csrf_token %}
+      <input type="file" name="file" accept=".kml,.kmz,.csv,.xlsx,.xls" required>
+      <button class="btn">Add area names</button>
+      <a class="btn-ghost" href="{% url 'area_csv' %}">⬇ Download my area names (CSV)</a>
+    </form>
+    {% if area_sources %}
+    <table class="tbl" style="margin-top:10px"><tr><th>Source</th><th>Names</th><th></th></tr>
+      {% for a in area_sources %}<tr><td>{{ a.source|default:"—" }}</td><td>{{ a.n }}</td>
+        <td><form method="post" action="{% url 'area_clear' %}" onsubmit="return confirm('Remove these {{ a.n }} area names?')">{% csrf_token %}<input type="hidden" name="source" value="{{ a.source }}"><button class="btn-ghost xs danger">remove</button></form></td></tr>{% endfor %}
+    </table>
+    {% else %}<p class="muted small">None of your own yet — the built-in names are used.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <div class="panel-head"><h2>3 · Check</h2><span class="spacer"></span>
+      <label class="small">Plan <select id="bScenario">{% for s in scenarios %}<option value="{{ s.pk }}">{{ s.name }}</option>{% endfor %}</select></label>
+      <label class="small">Compare with <select id="bLayer"><option value="">— none —</option>{% for l in layers %}{% if l.role == 'compare' %}<option value="{{ l.pk }}">{{ l.label }}</option>{% endif %}{% endfor %}</select></label>
+      <a id="bXlsx" class="btn-ghost sm" href="#">Excel</a></div>
+    <div id="bStatus" class="status busy">Checking…</div>
+    <div class="cards" id="bCards"></div>
+  </section>
+
+  <section class="card">
+    <div class="panel-head"><h2>Map</h2><span class="spacer"></span>
+      <span id="bOps"></span>
+      <label class="small"><input type="checkbox" id="lPta" checked> PTA districts</label>
+      <label class="small"><input type="checkbox" id="lOk"> sites OK</label>
+      <label class="small"><input type="checkbox" id="lBad" checked> sites to check</label>
+      <label class="small"><input type="checkbox" id="lPlan"> my planned franchises</label>
+      <label class="small"><input type="checkbox" id="lCmp" checked> comparison layer</label></div>
+    <div id="bMap" class="map bmap"></div>
+    <div class="legend small"><b>Shape:</b> ● Ufone ▲ TP · <b>Colour:</b> <span class="dotk ok"></span> inside its district <span class="dotk diff"></span> in a different PTA district than the file says
+      <span class="dotk out"></span> outside every PTA district <span class="lk pta"></span> PTA district border <span class="lk cmp"></span> comparison layer</div>
+  </section>
+
+  <section class="card">
+    <div class="tabs bt" id="bTabs">
+      <button data-t="sites" class="on">Sites to check</button>
+      <button data-t="names">District names</button>
+      <button data-t="spread">Franchises crossing PTA borders</button>
+      <button data-t="cmp">Compare with other layer</button>
+    </div>
+    <div class="btab" id="t-sites">
+      <div class="plan-tools"><select id="sFilter"></select><input id="sFind" class="search" placeholder="Find site, franchise, ASM, BM…"></div>
+      <div class="tblwrap tall-tbl"><table class="tbl sticky" id="sTbl"></table></div>
+    </div>
+    <div class="btab hidden" id="t-names">
+      <p class="muted small">How each district written in your site file matches PTA's list. Fix a wrong or missing match from the dropdown; it's remembered for this PTA file.</p>
+      <div class="tblwrap tall-tbl"><table class="tbl" id="nTbl"></table></div>
+    </div>
+    <div class="btab hidden" id="t-spread">
+      <div class="plan-tools"><div class="seg small-seg" id="spSide"><button data-v="post" class="on">Planned (post)</button><button data-v="pre">Current (pre)</button></div>
+        <label class="small"><input type="checkbox" id="spOnly" checked> only franchises crossing a border</label></div>
+      <p class="muted small"><b>Home district</b> = where most of the franchise's sites are. <b>Out of bound</b> = its sites in other PTA districts: candidates to move to a franchise of that district.</p>
+      <div class="tblwrap tall-tbl"><table class="tbl sticky" id="spTbl"></table></div>
+    </div>
+    <div class="btab hidden" id="t-cmp">
+      <div id="cEmpty" class="muted">Choose a comparison layer at the top (load one in step 1 first).</div>
+      <div id="cBody" class="hidden">
+        <h3>My planned franchises → <span class="cName"></span></h3>
+        <p class="muted small">For each planned franchise: which of their areas covers most of its territory, and how many of their areas it touches.</p>
+        <div class="tblwrap tall-tbl"><table class="tbl sticky" id="cOurs"></table></div>
+        <h3 style="margin-top:16px"><span class="cName"></span> areas → my franchises</h3>
+        <div class="tblwrap tall-tbl"><table class="tbl sticky" id="cZones"></table></div>
+      </div>
+    </div>
+  </section>
+</main>
+{% endblock %}
+{% block scripts %}
+<script src="{% static 'planner/vendor/leaflet.js' %}"></script>
+<script src="{% static 'planner/sites.js' %}?v=20261112"></script>
+<script src="{% static 'planner/boundaries.js' %}?v=20261112"></script>
+{% endblock %}

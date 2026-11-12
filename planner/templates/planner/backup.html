@@ -1,0 +1,60 @@
+{% extends "planner/base.html" %}
+{% block title %}Backup &amp; restore{% endblock %}
+{% block content %}
+<main class="page narrow">
+  <div class="card">
+    <h1>Backup &amp; restore</h1>
+    <p class="muted">Use this every time you move to a new version of the project, so no planning work is lost.</p>
+    <ol class="steps">
+      <li>In the <b>old</b> version: <b>Download full backup</b> below.</li>
+      <li>Unzip the <b>new</b> version, start it, open <b>Backup</b> and <b>restore</b> the file.</li>
+    </ol>
+    <p class="muted small">Coming from a version without this page? Restore its <code>db.sqlite3</code> file (in the old project folder) directly; that works too.
+      Simplest of all: copy the old <code>db.sqlite3</code> into the new folder before starting it.</p>
+  </div>
+
+  <div class="card">
+    <h2>Download</h2>
+    <p class="small">Currently stored: <b>{{ counts.scenarios }}</b> plan(s) with {{ counts.mappings }} franchise tags and {{ counts.overrides }} site moves ·
+      <b>{{ counts.months }}</b> month(s), {{ counts.sites }} site rows · <b>{{ counts.layers }}</b> boundary file(s).</p>
+    <div class="row-btns">
+      <a class="btn" href="{% url 'backup_download' %}?kind=full">⬇ Download full backup</a>
+      <a class="btn-ghost" href="{% url 'backup_download' %}?kind=plans">⬇ Plans only (small)</a>
+    </div>
+    <p class="muted small"><b>Full</b> = plans (tags, site moves, reviewed ASMs/BMs, settings), new franchise codes, PTA/Zong boundary files <i>and</i> all uploaded monthly site data.
+      <b>Plans only</b> = everything except the site data (re-upload your Excel files in the new version instead).</p>
+    {% if scenarios %}
+    <table class="tbl compact"><thead><tr><th>Plan</th><th class="r">Tags</th><th class="r">Site moves</th><th>Last changed</th></tr></thead>
+      <tbody>{% for s in scenarios %}<tr><td>{{ s.name }}</td><td class="r">{{ s.n_map }}</td><td class="r">{{ s.n_ov }}</td><td class="small">{{ s.updated_at|date:"d M Y H:i" }}</td></tr>{% endfor %}</tbody></table>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Restore</h2>
+    <form method="post" enctype="multipart/form-data" class="form" onsubmit="this.querySelector('button').textContent='Restoring… (can take a minute)'">
+      {% csrf_token %}
+      <label>Backup file (.zip) or an old <code>db.sqlite3</code> <input type="file" name="file" accept=".zip,.sqlite3,.db,.sqlite" required></label>
+      <label class="radio"><input type="checkbox" name="plans" checked> Plans (tags, site moves, reviews, settings)</label>
+      <label class="radio"><input type="checkbox" name="data" checked> Site data (months in the backup replace the same months here)</label>
+      <label class="radio"><input type="checkbox" name="layers" checked> Boundary files (PTA districts, Zong…)</label>
+      <label>If a plan with the same name already exists
+        <select name="same_name"><option value="replace">replace it with the backup's version</option><option value="keep">keep both (backup's gets "(restored)")</option></select></label>
+      <button class="btn">Restore</button>
+    </form>
+  </div>
+
+  {% if result %}
+  <div class="card">
+    <h3>Restored</h3>
+    <ul class="kv">
+      <li><span>Backup made</span><b>{{ result.source }}</b></li>
+      <li><span>Plans</span><b>{{ result.scenarios }}</b> {% if result.replaced %}<span class="muted small">({{ result.replaced }} replaced)</span>{% endif %}</li>
+      <li><span>Franchise tags / site moves / reviews</span><b>{{ result.mappings }} / {{ result.overrides }} / {{ result.reviews }}</b></li>
+      <li><span>Months of site data</span><b>{{ result.months|join:", "|default:"—" }}</b> <span class="muted small">{{ result.sites }} rows</span></li>
+      <li><span>Boundary files</span><b>{{ result.layers }}</b></li>
+    </ul>
+    <a class="btn" href="{% url 'home' %}">Go to plans</a>
+  </div>
+  {% endif %}
+</main>
+{% endblock %}

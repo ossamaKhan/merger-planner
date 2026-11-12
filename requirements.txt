@@ -1,0 +1,10 @@
+Django>=5.0
+pandas>=2.1
+numpy>=1.26
+openpyxl>=3.1
+shapely>=2.0
+whitenoise>=6.6
+# for Postgres / Supabase via DATABASE_URL
+dj-database-url>=2.1
+psycopg2-binary>=2.9
+gunicorn>=21.2

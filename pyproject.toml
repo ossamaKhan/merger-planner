@@ -1,0 +1,20 @@
+[project]
+name = "merger-planner"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "Django>=5.0",
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "openpyxl>=3.1",
+    "shapely>=2.0",
+    "whitenoise>=6.6",
+    "dj-database-url>=2.1",
+    "psycopg2-binary>=2.9",
+]
+
+[tool.vercel]
+entrypoint = "config.wsgi:application"
+
+[tool.vercel.scripts]
+build = "python vercel_build.py"

@@ -1,0 +1,98 @@
+{% extends "planner/base.html" %}
+{% load static %}
+{% block title %}{{ scenario.name }} · Report{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{% static 'planner/vendor/leaflet.css' %}">
+{% endblock %}
+{% block navright %}
+  <a class="btn-ghost sm" href="{% url 'planner' scenario.pk %}">← Back to planner</a>
+{% endblock %}
+{% block content %}
+<main class="page report" id="report" data-scenario="{{ scenario.pk }}">
+  <section class="rp-head card">
+    <div>
+      <h1>{{ scenario.name }}</h1>
+      <div class="muted">{{ scenario.description|default:"Pre vs post franchise plan" }}</div>
+    </div>
+    <div class="rp-ctl">
+      <div id="rCompany"></div>
+      <div class="rp-scope"><span class="lbl">Showing</span>
+        <select id="rView" title="Complete plan, or one ASM / BM / City / District / Region"></select></div>
+      <div><span class="lbl">Months</span> <div id="rMonths" class="chips"></div></div>
+      <div class="seg" id="rAgg"><button data-v="avg" class="on">Avg / month</button><button data-v="sum">Period total</button></div>
+    </div>
+    <div class="rp-dl">
+      <a id="dlKml" class="btn" href="#">⬇ KML</a>
+      <a id="dlKmz" class="btn-ghost" href="#" title="Same content zipped, much smaller">KMZ</a>
+      <a id="dlPost" class="btn-ghost" href="#" title="Only post boundaries + Region/BM/ASM outlines — lightest file, best for Google My Maps / Earth Web">KML: post boundaries only</a>
+      <a id="dlXlsx" class="btn-ghost" href="#">Excel</a>
+      <button class="btn-ghost" onclick="window.print()">Print / PDF</button>
+    </div>
+  </section>
+
+  <div id="rStatus" class="status busy">Loading…</div>
+
+  <section class="card">
+    <h2>Review progress</h2>
+    <div id="rProgress" class="rp-progress"></div>
+  </section>
+
+  <div class="cards" id="rCards"></div>
+
+  <section class="card hidden" id="rAlignSec">
+    <h2>Region breakdown</h2>
+    <p class="small" id="rAlignNote"></p>
+    <div class="tblwrap"><table class="tbl" id="rAlign"></table></div>
+  </section>
+
+  <section class="card">
+    <div class="panel-head"><h2>Pre vs post territories</h2><span class="view-chip" id="rViewChip"></span><span class="spacer"></span>
+      <span id="rOps"></span>
+      <label class="small"><input type="checkbox" id="rSites" checked> sites</label>
+      <label class="small"><input type="checkbox" id="rLabels" checked> labels</label>
+      <span class="tg-sep" title="Only draws border lines; use 'Showing' at the top to filter">Draw borders:</span>
+      <label class="small"><input type="checkbox" class="rU" value="region"> Region</label>
+      <label class="small"><input type="checkbox" class="rU" value="bm" checked> BM</label>
+      <label class="small"><input type="checkbox" class="rU" value="arm" checked> ASM</label>
+      <label class="small"><input type="checkbox" class="rU" value="tehsil"> City</label>
+      <label class="small"><input type="checkbox" class="rU" value="district"> District</label>
+      <span id="rCmp"></span></div>
+    <div class="maps rp-maps">
+      <div class="mapbox"><div class="maptitle">PRE · current <span id="rPreN"></span></div><div id="rMapPre" class="map"></div></div>
+      <div class="mapbox"><div class="maptitle">POST · plan <span id="rPostN"></span></div><div id="rMapPost" class="map"></div></div>
+    </div>
+    <div id="rOutside" class="outside hidden"></div>
+  </section>
+
+  <section class="card">
+    <div class="panel-head"><h2>Hierarchy</h2><span class="spacer"></span>
+      <div class="seg small-seg" id="rTree"><button data-v="sales" class="on">Big Region › Region › BM › ASM › franchise</button><button data-v="geo">Big Region › Region › District › City › franchise</button></div>
+      <button id="rExpand" class="btn-ghost sm">Expand all</button>
+      <button id="rKcols" class="btn-ghost sm">KPI columns</button></div>
+    <div id="rKpick" class="colpicker hidden"></div>
+    <div class="tblwrap tall-tbl"><table class="tbl sticky htree" id="rHier"></table></div>
+  </section>
+
+  <section class="card">
+    <div class="panel-head"><h2>Merged franchises</h2><span class="muted small" id="rMergedN"></span><span class="spacer"></span>
+      <input id="rFind" class="search" style="max-width:220px" placeholder="Find franchise…"></div>
+    <p class="muted small">One table per planned franchise that combines two or more current franchises. Each column is a member; <b>Consolidated</b> is their total; <b>Projected</b> applies the scenario's uplift.</p>
+    <div id="rMerged" class="rp-merged"></div>
+  </section>
+
+  <section class="card">
+    <h2>Consolidated — all planned franchises</h2>
+    <div class="tblwrap tall-tbl"><table class="tbl sticky" id="rConsol"></table></div>
+  </section>
+
+  <section class="card">
+    <h2>Mapping — current → planned</h2>
+    <div class="tblwrap tall-tbl"><table class="tbl sticky" id="rMap"></table></div>
+  </section>
+</main>
+{% endblock %}
+{% block scripts %}
+<script src="{% static 'planner/vendor/leaflet.js' %}"></script>
+<script src="{% static 'planner/sites.js' %}?v=20261112"></script>
+<script src="{% static 'planner/report.js' %}?v=20261112"></script>
+{% endblock %}

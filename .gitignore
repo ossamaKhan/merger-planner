@@ -1,0 +1,12 @@
+db.sqlite3
+*.sqlite3
+*.log
+share_link.txt
+share_log.txt
+__pycache__/
+*.pyc
+.env
+.env.*
+.vercel/
+staticfiles/
+*.zip

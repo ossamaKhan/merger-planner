@@ -1,0 +1,38 @@
+{% extends "planner/base.html" %}
+{% load humanize_lite %}
+{% block title %}Compare scenarios{% endblock %}
+{% block content %}
+<main class="page">
+  <div class="card">
+    <h2>Compare scenarios</h2>
+    <form method="get" class="form inline-form">
+      <div class="chips">{% for s in all %}<label class="chip"><input type="checkbox" name="s" value="{{ s.pk }}" {% if s.pk in selected %}checked{% endif %}> {{ s.name }}</label>{% endfor %}</div>
+      <label>Months
+        <select name="months_multi" multiple size="3" onchange="this.form.months.value=[...this.selectedOptions].map(o=>o.value).join('|')">
+          {% for m in months %}<option value="{{ m.key }}" {% if m.key in sel_months %}selected{% endif %}>{{ m }}</option>{% endfor %}
+        </select>
+      </label>
+      <input type="hidden" name="months" value="{{ sel_months|join:'|' }}">
+      <button class="btn">Compare</button>
+    </form>
+  </div>
+  {% if rows %}
+  <div class="card">
+    <table class="tbl">
+      <thead><tr><th>Scenario</th><th>Franchises pre → post</th><th>Avg sites / franchise</th><th>Min–max sites</th>
+        <th>{{ rows.0.primary }} / franchise</th><th>Balance (CV, lower = more even)</th><th>Projected {{ rows.0.primary }}</th><th>Warnings</th></tr></thead>
+      <tbody>{% for r in rows %}<tr>
+        <td><a href="{% url 'planner' r.scenario.pk %}"><b>{{ r.scenario.name }}</b></a></td>
+        <td>{{ r.s.pre_franchises }} → <b>{{ r.s.post_franchises }}</b></td>
+        <td>{{ r.s.pre_avg_sites|floatformat:0 }} → <b>{{ r.s.post_avg_sites|floatformat:0 }}</b></td>
+        <td>{{ r.s.post_min_sites|floatformat:0 }} – {{ r.s.post_max_sites|floatformat:0 }}</td>
+        <td>{{ r.s.pre_per_fr|compact }} → <b>{{ r.s.post_per_fr|compact }}</b></td>
+        <td>{{ r.s.pre_cv|floatformat:2 }} → <b>{{ r.s.post_cv|floatformat:2 }}</b></td>
+        <td>{{ r.s.projected_totals|get:r.primary|compact }} <span class="muted small">(base {{ r.s.totals|get:r.primary|compact }})</span></td>
+        <td>{{ r.warnings }}</td>
+      </tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  {% endif %}
+</main>
+{% endblock %}

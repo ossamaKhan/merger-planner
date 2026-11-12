@@ -1,0 +1,70 @@
+{% extends "planner/base.html" %}
+{% block title %}Scenarios{% endblock %}
+{% block content %}
+<main class="page">
+  <section class="hero">
+    <div>
+      <h1>Post-merger franchise planning</h1>
+      <p class="muted">Tag old Telenor and Ufone franchises to new ones, see pre/post KPIs, projections and territory maps, then export the case for HQ.</p>
+    </div>
+    <div class="hero-stats">
+      <div><b>{{ months|length }}</b><span>months loaded</span></div>
+      <div><b>{{ latest.row_count|default:0 }}</b><span>sites ({{ latest|default:"—" }})</span></div>
+      <div><b>{{ franchise_count }}</b><span>franchises</span></div>
+    </div>
+  </section>
+
+  {% if not months %}
+  <div class="card callout">
+    <h3>No data yet</h3>
+    <p>Upload your monthly site workbook (Sheet1) on the <a href="{% url 'upload' %}">Upload data</a> page, or run
+      <code>python manage.py make_sample_data sample.xlsx</code> then <code>python manage.py import_sites sample.xlsx</code> to try it with synthetic data.</p>
+  </div>
+  {% endif %}
+
+  <div class="grid-2">
+    <div class="card">
+      <h2>Scenarios</h2>
+      <table class="tbl">
+        <thead><tr><th>Name</th><th>Tags</th><th>Site moves</th><th>Radius</th><th>Updated</th><th></th></tr></thead>
+        <tbody>
+        {% for s in scenarios %}
+          <tr>
+            <td><a href="{% url 'planner' s.pk %}"><b>{{ s.name }}</b></a><div class="muted small">{{ s.description|truncatechars:80 }}</div></td>
+            <td>{{ s.n_map }}</td><td>{{ s.n_ov }}</td><td>{{ s.coverage_km }} km</td>
+            <td class="small">{{ s.updated_at|date:"d M, H:i" }}</td>
+            <td class="actions">
+              <a class="btn-ghost sm" href="{% url 'report' s.pk %}">Report</a>
+              <form method="post" action="{% url 'scenario_clone' s.pk %}">{% csrf_token %}<button class="btn-ghost sm">Clone</button></form>
+              <form method="post" action="{% url 'scenario_delete' s.pk %}" onsubmit="return confirm('Delete scenario {{ s.name|escapejs }}?')">{% csrf_token %}<button class="btn-ghost sm danger">Delete</button></form>
+            </td>
+          </tr>
+        {% empty %}<tr><td colspan="6" class="muted">No scenarios yet — create one on the right.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>New scenario</h2>
+      <form method="post" action="{% url 'scenario_create' %}" class="form">
+        {% csrf_token %}
+        <label>Name <input name="name" placeholder="e.g. Multan 13 → 10" required></label>
+        <label>Description <textarea name="description" rows="2" placeholder="What this plan is trying to achieve"></textarea></label>
+        <label>Coverage radius per site (km) <input name="coverage_km" type="number" step="0.1" min="0.1" value="1.0"></label>
+        <label class="radio"><input type="radio" name="seed" value="blank" checked> Start blank (every franchise stays as is)</label>
+        <label class="radio"><input type="radio" name="seed" value="mocan"> Start from the <b>Franchise ID After MOCAN</b> column</label>
+        <button class="btn">Create &amp; open planner</button>
+      </form>
+    </div>
+  </div>
+
+  {% if by_region %}
+  <div class="card">
+    <h2>Latest month by region <span class="muted small">({{ latest }})</span></h2>
+    <table class="tbl compact"><thead><tr><th>Region</th><th>Sites</th><th>Franchises</th></tr></thead>
+      <tbody>{% for r in by_region %}<tr><td>{{ r.region|default:"—" }}</td><td>{{ r.sites }}</td><td>{{ r.franchises }}</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  {% endif %}
+</main>
+{% endblock %}
