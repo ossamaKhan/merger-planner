@@ -413,3 +413,8 @@ table.cons tr.tot td { font-weight: 700; border-top: 2px solid #1f2a44; backgrou
 .sitepp table.hier td { padding: 1px 0; }
 .sitepp table.hier tr.rc td, .sitepp table.hier tr.rc th { color: #0b6e4f; border-top: 1px solid #e3e7ee; padding-top: 3px; }
 .maptitle.post-edit { background: rgba(243,112,33,.95); }
+
+/* RD session: show PRE (previously tagged) first, then RDs proposed, then your changes */
+.maps.rdmode #rdBox { order: -1; }
+.maps.rdmode .maptitle.rd { background: rgba(31,42,68,.92); }
+.areahits .hit-h { padding: 5px 9px 2px; font: 700 10.5px var(--sans, system-ui); letter-spacing: .06em; text-transform: uppercase; color: #8a93a6; }

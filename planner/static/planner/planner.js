@@ -84,7 +84,8 @@
     const u = S.unit;
     if (S.level === "region" && u) p.push(["regions", u]);
     else if (S.region !== ALL && isBig(S.region)) p.push(["bigs", bigName(S.region)]);
-    else if (S.region !== ALL) p.push(["regions", S.region]);
+    // at Region level the unit list picks the region, so a leftover region choice must not filter
+    else if (S.region !== ALL && S.level !== "region") p.push(["regions", S.region]);
     if (!u || S.level === "region") return p;
     if (S.level === "district") p.push(["districts", u]);
     if (S.level === "tehsil") { const [d, t] = u.split(" / "); p.push(["districts", d], ["tehsils", t]); }
@@ -115,6 +116,7 @@
       : `<optgroup label="Regions in ${esc(circle())}">` + regs.map(regOpt).join("") + "</optgroup>");
     $("#selRegion").value = S.region;
     $("#selRegion").disabled = S.level === "region" && !(bigList().length > 1);
+    if (S.level === "region" && !isBig(S.region) && S.region !== ALL) { S.region = ALL; $("#selRegion").value = ALL; }
     $$("#levelSeg button").forEach((b) => b.classList.toggle("on", b.dataset.v === S.level));
     const units = unitsFor(S.level);
     if (S.unit && !units.some((u) => u.v === S.unit)) S.unit = "";
@@ -375,7 +377,7 @@
   }
   // every franchise code in the data (current + planned + tag targets), not just this view
   function allCodes() {
-    return [...new Set([...Object.keys(S.filters.fr_sites || {}), ...Object.keys(S.franchises), ...Object.values(S.res ? S.res.mapping : {}), ...S.newBuckets])].filter(Boolean).sort();
+    return [...new Set([...Object.keys(S.filters.fr_sites || {}), ...(S.filters.rd_codes || []), ...Object.keys(S.franchises), ...Object.values(S.res ? S.res.mapping : {}), ...S.newBuckets])].filter(Boolean).sort();
   }
   function codeOptions(selected, inView, label) {
     const here = new Set(inView);
@@ -405,8 +407,8 @@
         ${rcol ? `<tr class="rc"><th>${esc(rcol)}</th><td><b>${fmt(s.recharge)}</b> <span class="muted small">${per}</span></td></tr>` : ""}
         ${k && k !== rcol ? `<tr><th>${esc(k)}</th><td>${fmt(s.kpi)}</td></tr>` : ""}
       </table>
-      ${BASE === "rd" ? "RDs (pre)" : "Current"}: <b style="color:${colorOf(s.pre)}">${esc(s.pre)}</b> → ${BASE === "rd" ? "Your post" : "Plan"}: <b style="color:${colorOf(s.post)}">${esc(s.post)}</b>${s.overridden ? ' <span class="tag">moved</span>' : ""}<br>
-      ${s.rd_post ? (BASE === "rd" ? `Before RDs (current): <b style="color:${colorOf(s.rd_post)}">${esc(s.rd_post)}</b>${s.in_rd === false ? ' <span class="tag">not in RD file</span>' : ""}<br>`
+      ${BASE === "rd" ? "RDs proposed" : "Current"}: <b style="color:${colorOf(s.pre)}">${esc(s.pre)}</b> → ${BASE === "rd" ? "Your post" : "Plan"}: <b style="color:${colorOf(s.post)}">${esc(s.post)}</b>${s.overridden ? ' <span class="tag">moved</span>' : ""}<br>
+      ${s.rd_post ? (BASE === "rd" ? `Previously tagged (PRE): <b style="color:${colorOf(s.rd_post)}">${esc(s.rd_post)}</b>${s.in_rd === false ? ' <span class="tag">not in RD file</span>' : ""}<br>`
         : `RD final: <b style="color:${rdColor(s.rd_post)}">${esc(s.rd_post)}</b>${s.rd_post !== RD_NONE && s.rd_post !== s.post ? ' <span class="tag">differs</span>' : ""}<br>`) : ""}
       ${s.franchise_after_mocan ? `After MOCAN (file): ${esc(s.franchise_after_mocan)}<br>` : ""}
       <div class="pp-move"><select data-site="${esc(s.site_id)}">${targetOptions(s.post, s.overridden)}</select><button class="btn sm" data-move="${esc(s.site_id)}">Move</button></div></div>`;
@@ -523,6 +525,12 @@
   const RD_NONE = "Not in RD file";
   const rdColor = (code) => (code === RD_NONE ? "#9aa3b2" : colorOf(code));
   function rdTerritoryPopup(p) {
+    if (BASE === "rd") {
+      const ss = (S.res.sites || []).filter((s) => s.rd_post === p.code);
+      const to = {}; ss.forEach((s) => { to[s.pre] = (to[s.pre] || 0) + 1; });
+      return `<div class="pp"><b style="color:${p.color}">${esc(p.code)}</b> <span class="muted small">· previously tagged (PRE)</span><br>
+        ${p.sites} sites · ${p.area_km2} km²<br>RDs proposed for these sites: ${Object.entries(to).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${esc(c)} (${n})`).join(", ")}</div>`;
+    }
     const plan = (S.res.sites || []).filter((s) => s.rd_post === p.code);
     const same = plan.filter((s) => s.post === p.code).length;
     const from = {}; plan.forEach((s) => { from[s.pre] = (from[s.pre] || 0) + 1; });
@@ -539,10 +547,10 @@
       const href = `/scenario/${SC}/rd-vs-plan.csv?${query()}`;
       el.classList.remove("hidden");
       el.innerHTML = `<b>Plan based on RDs data</b> <span class="muted small">${d.loaded ? esc(d.file) + " · " + esc(d.uploaded) : "no RD file loaded"}</span>
-        <span class="chip">PRE: ${d.sites} sites from the RD file · ${d.rd_franchises} RD franchises</span>
-        <span class="chip ${d.not_in_rd ? "warn" : ""}" title="Not in the RD file (or no Final Franchise): these keep their current franchise in PRE">${d.not_in_rd} not in RD file (kept current)</span>
-        <span class="chip ${d.differs ? "warn" : ""}" title="Sites whose POST differs from the RD PRE because of your changes">${d.differs} sites changed by you</span>
-        <span class="chip">3rd map: current franchises (${d.franchises})</span>
+        <span class="chip" title="PRE map: PREVIOUSLY TAG FRANCHISE from the RD file (ex-TP / ex-Ufone; when both, by the site's operator)">PRE (previously tagged): ${d.franchises} franchises</span>
+        <span class="chip">RDs proposed: ${d.rd_franchises} franchises · ${d.sites} sites</span>
+        <span class="chip ${d.not_in_rd ? "warn" : ""}" title="Not in the RD file (or no Final Franchise): these keep their franchise from the site file">${d.not_in_rd} not in RD file</span>
+        <span class="chip ${d.differs ? "warn" : ""}" title="Sites whose POST differs from the RDs' proposal because of your changes">${d.differs} sites changed by you</span>
         <span class="spacer"></span>
         <a class="btn-ghost xs" href="${href}">⬇ Your changes vs RDs (CSV)</a>
         <a class="btn-ghost xs" href="${href}&all=1">⬇ all sites</a>`;
@@ -681,7 +689,10 @@
       if (q && !(b.code.toLowerCase().includes(q) || b.chips.some((c) => c.code.toLowerCase().includes(q)))) return false;
       return true;
     }).sort((a, b) => (!a.row ? -1 : !b.row ? 1 : b.row.sites - a.row.sites));
-    $("#board").innerHTML = list.map((b) => {
+    // not on this board (e.g. a resigned / previously tagged FID in another area): offer a search everywhere
+    const notHere = q && q.length >= 3 && !list.length
+      ? `<div class="issue">“${esc($("#boardSearch").value.trim())}” isn't in this view. <a href="#" id="boardFindAll">Search all franchise IDs (incl. previous &amp; requested from the RD file) →</a></div>` : "";
+    $("#board").innerHTML = notHere + list.map((b) => {
       const r = b.row;
       const proj = r && k ? pct(r.projected[k], r.kpis[k]) : null;
       const chips = b.chips.map((c) => {
@@ -728,6 +739,9 @@
     if (c) { $("#tfFrom").value = c.dataset.chip; drawTagScope(); $("#tfTo").focus(); }
   });
   $("#boardSearch").addEventListener("input", drawBoard);
+  const boardFindAll = () => { const v = $("#boardSearch").value.trim(); if (!v) return; $("#siteFind").value = v; $("#siteFind").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" })); };
+  $("#boardSearch").addEventListener("keydown", (e) => { if (e.key === "Enter" && !$("#board .fbox, #board .bucket")) { e.preventDefault(); boardFindAll(); } });
+  $("#board").addEventListener("click", (e) => { if (e.target.id === "boardFindAll") { e.preventDefault(); boardFindAll(); } });
 
   async function merge(codes, target) {
     const changes = {}, inverse = {};
@@ -987,8 +1001,36 @@
     }, 350);
     return true;
   }
+  // franchise ID: highlight it on every map where it appears (PRE / POST / third map)
+  function focusFranchise(code) {
+    const g = S.res.geo || {}, b = L.latLngBounds([]);
+    const where = [];
+    [["pre", "pre"], ["post", "post"], ["rd", "rd"]].forEach(([k, side]) => {
+      const fc = g[k]; if (!fc || !M[side]) return;
+      const feats = (fc.features || []).filter((f) => f.properties.code === code);
+      if (!feats.length) return;
+      where.push({ pre: BASE === "rd" ? "RDs proposed" : "PRE", post: "POST", rd: BASE === "rd" ? "PRE (previously tagged)" : "from RDs" }[side]);
+      const lay = L.geoJSON({ type: "FeatureCollection", features: feats }, { interactive: false, style: { color: "#ff0080", weight: 4, fill: false, dashArray: "6 4" } }).addTo(M[side].map);
+      b.extend(lay.getBounds());
+      setTimeout(() => lay.remove(), 8000);
+    });
+    if (!b.isValid()) return false;
+    $("#maps").scrollIntoView({ behavior: "smooth", block: "start" });
+    M.post.map.fitBounds(b.pad(0.15));
+    toast(`<b>${esc(code)}</b> shown in pink on: ${where.join(", ")}`);
+    return true;
+  }
   function pickSite(x) {
     $("#siteHits").classList.add("hidden");
+    if (x.kind === "fid") {
+      $("#siteFind").value = x.code;
+      if (focusFranchise(x.code)) return;
+      if (!x.arm) { toast(`${esc(x.code)}: none of its sites are in your site data, so it can't be placed on the map.`); return; }
+      S.region = ALL; S.level = "arm"; S.unit = x.arm; S.fit = false; S.pendingFr = x.code;
+      save(); drawNav(); run();
+      toast(`Opening ASM <b>${esc(x.arm)}</b> for franchise ${esc(x.code)}…`);
+      return;
+    }
     $("#siteFind").value = x.site_id;
     if (focusSite(x.site_id)) return;
     // not in the current view: open that site's ASM (and both companies if needed)
@@ -1003,19 +1045,23 @@
       const q = inp.value.trim();
       if (q.length < 2) { box.classList.add("hidden"); return []; }
       const res = await fetch(`/api/site-search/?q=${encodeURIComponent(q)}`).then((x) => x.json());
-      siteHitsList = res.results;
-      box.innerHTML = res.results.length ? res.results.map((a, i) => `<div class="hit" data-i="${i}">${OPS.sym(OPS.kind(a.operator), 10)} <b>${esc(a.site_id)}</b>
-          <span class="muted small">${esc(a.franchise)} · ${esc(a.region)} › ${esc(a.bm || "—")} › ${esc(a.arm || "—")} · ${esc(a.tehsil || a.district || "")}</span></div>`).join("")
-        : `<div class="hit muted small">No site matches “${esc(q)}”.</div>`;
+      siteHitsList = res.results.map((a) => ({ ...a, kind: "site" })).concat((res.franchises || []).map((f) => ({ ...f, kind: "fid" })));
+      const frs = siteHitsList.filter((x) => x.kind === "fid"), sts = siteHitsList.filter((x) => x.kind === "site");
+      box.innerHTML = (frs.length ? `<div class="hit-h">Franchise IDs</div>` + frs.map((f) => `<div class="hit" data-i="${siteHitsList.indexOf(f)}">🏷 <b>${esc(f.code)}</b>
+          <span class="muted small">${f.tags.map(esc).join(" · ")} · ${f.sites} site(s)${f.arm ? " · " + esc(f.arm) : ""}</span></div>`).join("") : "")
+        + (sts.length ? `<div class="hit-h">Sites</div>` + sts.map((a) => `<div class="hit" data-i="${siteHitsList.indexOf(a)}">${OPS.sym(OPS.kind(a.operator), 10)} <b>${esc(a.site_id)}</b>
+          <span class="muted small">${esc(a.franchise)} · ${esc(a.region)} › ${esc(a.bm || "—")} › ${esc(a.arm || "—")} · ${esc(a.tehsil || a.district || "")}</span></div>`).join("") : "")
+        || `<div class="hit muted small">No site or franchise matches “${esc(q)}”.</div>`;
       box.classList.remove("hidden");
-      return res.results;
+      return siteHitsList;
     };
     inp.addEventListener("input", () => { clearTimeout(siteT); siteT = setTimeout(search, 200); });
     inp.addEventListener("keydown", async (e) => {
       if (e.key !== "Enter") return;
       e.preventDefault();
       const list = await search();
-      const exact = list.find((a) => a.site_id.toUpperCase() === inp.value.trim().toUpperCase()) || list[0];
+      const v = inp.value.trim().toUpperCase();
+      const exact = list.find((a) => (a.kind === "fid" ? a.code : a.site_id).toUpperCase() === v) || list[0];
       if (exact) pickSite(exact); else toast("Site not found.");
     });
     box.addEventListener("mousedown", (e) => { const h = e.target.closest("[data-i]"); if (h) { e.preventDefault(); pickSite(siteHitsList[+h.dataset.i]); } });
@@ -1349,6 +1395,7 @@
     if (!S.cols) S.cols = defaultCols();
     drawColPicker(); drawNav(); fillTargets(); drawPending();
     drawCards(); drawMaps(); drawLegend(); drawBoard(); drawDive(); drawHierarchy(); drawIssues(); drawStrays(); drawCons(); drawTable(); drawTotals(); drawCharts();
+    if (S.pendingFr) { const c = S.pendingFr; S.pendingFr = null; if (!focusFranchise(c)) toast(`${esc(c)} isn't on these maps (check the Company / Months filters).`); }
     if (S.pendingSite) { const id = S.pendingSite; S.pendingSite = null; if (!focusSite(id)) toast(`${esc(id)} isn't in this view (check the Company and Months filters).`); }
     const noXY = res.sites.filter((s) => s.latitude == null).length;
     status(`${esc(viewName())} · ${res.meta.months.length} month(s) · ${fmt(res.summary.sites)} sites · ${res.summary.pre_franchises} → ${res.summary.post_franchises} franchises${noXY ? ` · ${noXY} without coordinates` : ""}`);

@@ -90,7 +90,14 @@ Notes
   top (merge board, tagging, islands, report and KML all work the same), third map = the current
   franchises before RDs. The RD-based plan is a linked copy, so your own plan is never changed.
   Sites not in the RD file keep their current franchise. CSV: your changes vs RDs.
-* **Site search** (top right): type a site ID and press Enter. It zooms to the site, or opens its ASM if
+* **RD session maps**: PRE · previously tagged (RD file's PREVIOUSLY TAG FRANCHISE ex-TP / ex-Ufone;
+  when both are given, the one matching the site's operator) → RDs proposed (Final Franchise) →
+  POST · your changes.
+* **🗺 Maps only** (planner header): full-screen page with just the maps. Tick which maps to show
+  (they share the screen evenly) and filter by hierarchy (Big Region › Region › BM › ASM, District ›
+  City) and operator only.
+* **Site / FID search** (top right): type a site ID or any franchise ID — including previously tagged
+  and requested IDs from the RD file (e.g. resigned franchises) — and press Enter. Type a site ID and press Enter. It zooms to the site, or opens its ASM if
   it is outside the view. Clicking any site shows the full hierarchy (Big Region › Region › BM › ASM,
   District › City › Area) and Total Recharge.
 * **RD file → POST (from RDs) map.** On *Upload data › RD file*, upload the RD tagging sheet

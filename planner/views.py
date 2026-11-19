@@ -142,7 +142,7 @@ def rd_diff_csv(request, pk):
     resp["Content-Disposition"] = f'attachment; filename="RD_vs_plan_{sc.pk}.csv"'
     w = csv.writer(resp)
     if sc.base == "rd":  # RD-based plan: RD Final Franchise (pre) vs your changes (post)
-        w.writerow(["Site", "Operator", "Region", "BM", "ASM", "District", "City", "Area", "Current franchise (before RDs)", "RD Final Franchise (pre)", "Your post", "In RD file", "Status"])
+        w.writerow(["Site", "Operator", "Region", "BM", "ASM", "District", "City", "Area", "Previously tagged (PRE)", "RDs proposed (Final Franchise)", "Your post", "In RD file", "Status"])
         for s in res["sites"]:
             st = "changed by you" if s["post"] != s["pre"] else "same as RD"
             if request.GET.get("all") or st != "same as RD":
@@ -216,6 +216,13 @@ def planner(request, pk):
 
 
 @gated
+def maps_page(request, pk):
+    """Maps only: full-screen maps, hierarchy + operator filters."""
+    sc = get_object_or_404(Scenario, pk=pk)
+    return render(request, "planner/maps.html", {"scenario": sc, "circle": settings.PLANNER_CIRCLE_NAME})
+
+
+@gated
 def scenario_switch(request, pk, base):
     """Selector 'Make your own pre/post' <-> 'Based on RDs data'. Each plan keeps its own changes:
     the RD-based plan is a linked twin, created the first time."""
@@ -264,7 +271,53 @@ def api_site_search(request):
                     "region": s.region, "bm": s.bm, "arm": s.arm, "district": s.geo_district or s.district,
                     "tehsil": s.geo_tehsil, "city": s.city, "franchise": s.franchise_code,
                     "lat": s.latitude, "lon": s.longitude, "month": s.month.key})
-    return JsonResponse({"results": out})
+    return JsonResponse({"results": out, "franchises": _franchise_search(q)})
+
+
+def _franchise_codes():
+    """Every franchise ID we know: site file (current) + RD file (previous ex-TP/ex-Ufone, requested, final)."""
+    from .models import RDTag
+    src = {}
+
+    def add(code, tag, sid=None):
+        code = (code or "").strip()
+        if not code or code.upper() in ("-", "NAN", "NONE", "#N/A", "0"):
+            return
+        e = src.setdefault(code, {"tags": set(), "sites": set()})
+        e["tags"].add(tag)
+        if sid:
+            e["sites"].add(sid.upper())
+    latest = DataMonth.objects.order_by("-month").first()
+    if latest:
+        for sid, code in Site.objects.filter(month=latest).values_list("site_id", "franchise_code"):
+            add(code, "site file", sid)
+    for r in RDTag.objects.values_list("site_id", "prev_tp", "prev_ufone", "req_tp", "req_ufone", "final_franchise"):
+        sid = r[0]
+        add(r[1], "previous (ex-TP)", sid); add(r[2], "previous (ex-Ufone)", sid)
+        add(r[3], "requested (ex-TP)", sid); add(r[4], "requested (ex-Ufone)", sid)
+        add(r[5], "RD final", sid)
+    return src
+
+
+def _franchise_search(q, limit=12):
+    from collections import Counter
+    ql = q.strip().upper()
+    src = _franchise_codes()
+    hits = sorted([c for c in src if ql in c.upper()], key=lambda c: (c.upper() != ql, not c.upper().startswith(ql), c))[:limit]
+    if not hits:
+        return []
+    sid_all = set().union(*(src[c]["sites"] for c in hits))
+    info = {}
+    for s in Site.objects.filter(site_id__in=list(sid_all)).order_by("month__month").values("site_id", "arm", "region", "operator"):
+        info[s["site_id"].upper()] = s  # latest month wins
+    out = []
+    for c in hits:
+        rows = [info[x] for x in src[c]["sites"] if x in info]
+        arm = Counter(r["arm"] for r in rows).most_common(1)
+        reg = Counter(r["region"] for r in rows).most_common(1)
+        out.append({"code": c, "tags": sorted(src[c]["tags"]), "sites": len(src[c]["sites"]), "placed": len(rows),
+                    "arm": arm[0][0] if arm else "", "region": reg[0][0] if reg else ""})
+    return out
 
 
 @gated
@@ -313,6 +366,7 @@ def api_filters(request):
         "franchises": frs,
         "combos": combos,
         "fr_sites": fr_sites,
+        "rd_codes": sorted(c for c in _franchise_codes() if c not in fr_sites),
         "circle": circle_name(combos),
         "bigs": sorted({c[6] for c in combos}),
     })

@@ -218,6 +218,13 @@ def _cv(arr):
     return float(arr.std() / arr.mean())
 
 
+def _post_series(monthly, months, kcols, codes):
+    """{code: {kpi: [value per month]}} from a (post, mkey) x kpi table, without a lookup per franchise."""
+    full = monthly.reindex(pd.MultiIndex.from_product([list(codes), months], names=monthly.index.names)).fillna(0.0).round(2)
+    arr = full[kcols].to_numpy().reshape(len(codes), len(months), len(kcols))
+    return {code: {k: arr[i, :, j].tolist() for j, k in enumerate(kcols)} for i, code in enumerate(codes)}
+
+
 def compute_kpis(df, kcols, scenario, agg="avg", palette=None):
     palette = palette or {}
     months = sorted(df["mkey"].unique())
@@ -257,16 +264,28 @@ def compute_kpis(df, kcols, scenario, agg="avg", palette=None):
 
     lat_all = latest_per_site(df)
 
-    # descriptors per franchise
+    # descriptors per franchise — computed once per column with groupby (was a filter per franchise)
+    desc_cache = {}
+
+    def _desc_table(col):
+        if col not in desc_cache:
+            g = df.groupby(col)
+            uniq = {f: g[f].unique() for f in ("dist", "region", "bm", "arm")}
+            ops = lat_all.groupby([col, "operator"]).size()
+            opd = defaultdict(dict)
+            for (c, o), n in ops.items():
+                opd[c][o] = int(n)
+            desc_cache[col] = (uniq, opd)
+        return desc_cache[col]
+
     def describe(col, code):
-        sub = df[df[col] == code]
-        latest = lat_all[lat_all[col] == code]
+        uniq, opd = _desc_table(col)
         return {
-            "operators": latest["operator"].value_counts().to_dict(),
-            "districts": sorted(sub["dist"].unique().tolist()),
-            "regions": sorted(sub["region"].unique().tolist()),
-            "bms": sorted([b for b in sub["bm"].unique().tolist() if b]),
-            "arms": sorted([a for a in sub["arm"].unique().tolist() if a]),
+            "operators": opd.get(code, {}),
+            "districts": sorted(uniq["dist"].get(code, []).tolist()) if code in uniq["dist"] else [],
+            "regions": sorted(uniq["region"][code].tolist()) if code in uniq["region"] else [],
+            "bms": sorted([b for b in uniq["bm"][code].tolist() if b]) if code in uniq["bm"] else [],
+            "arms": sorted([a for a in uniq["arm"][code].tolist() if a]) if code in uniq["arm"] else [],
         }
 
     pre_rows = []
@@ -274,9 +293,11 @@ def compute_kpis(df, kcols, scenario, agg="avg", palette=None):
     pre_to_post = defaultdict(dict)
     for (a, b), cnt in latest_df.groupby(["franchise_code", "post"]).size().items():
         pre_to_post[a][b] = int(cnt)
+    pre_d = pre_vals[kcols].astype(float).to_dict("index")
+    pre_s = pre_sites.astype(float).to_dict()
     for code in pre_vals.index:
-        vals = {k: float(pre_vals.loc[code, k]) for k in kcols}
-        s = float(pre_sites.loc[code])
+        vals = pre_d[code]
+        s = pre_s[code]
         pre_rows.append({
             "code": code, "name": name(code), "color": color(code), "sites": s, "kpis": vals,
             "derived": _derive(vals, s, derived),
@@ -285,16 +306,20 @@ def compute_kpis(df, kcols, scenario, agg="avg", palette=None):
         })
 
     post_rows = []
+    post_d = post_vals[kcols].astype(float).to_dict("index")
+    post_s = post_sites.astype(float).to_dict()
+    mem_by = defaultdict(list)
+    msd = mem_sites.astype(float).to_dict()
+    for (pc, mc), mv in mem_vals[kcols].astype(float).to_dict("index").items():
+        mem_by[pc].append((mc, mv, msd[(pc, mc)]))
+    pre_codes = set(df["franchise_code"])
     for code in post_vals.index:
-        vals = {k: float(post_vals.loc[code, k]) for k in kcols}
-        n = float(post_sites.loc[code])
+        vals = post_d[code]
+        n = post_s[code]
         members = []
-        mem = mem_vals.loc[code]
-        msites = mem_sites.loc[code]
-        for mcode in mem.index:
-            mv = {k: float(mem.loc[mcode, k]) for k in kcols}
-            members.append({"code": mcode, "name": name(mcode), "color": color(mcode), "sites": float(msites.loc[mcode]),
-                            "kpis": mv, "derived": _derive(mv, float(msites.loc[mcode]), derived)})
+        for mcode, mv, ms in mem_by[code]:
+            members.append({"code": mcode, "name": name(mcode), "color": color(mcode), "sites": ms,
+                            "kpis": mv, "derived": _derive(mv, ms, derived)})
         members.sort(key=lambda m: -m["sites"])
         projected = {}
         for k in kcols:
@@ -313,7 +338,7 @@ def compute_kpis(df, kcols, scenario, agg="avg", palette=None):
             "derived": _derive(vals, n, derived), "projected": projected,
             "projected_derived": _derive(projected, n, derived),
             "trend_next": trend_next.get(code, {}), "members": members,
-            "is_new": code not in set(df["franchise_code"]),
+            "is_new": code not in pre_codes,
             **describe("post", code),
         })
     post_rows.sort(key=lambda r: -r["sites"])
@@ -326,8 +351,7 @@ def compute_kpis(df, kcols, scenario, agg="avg", palette=None):
         "months": months,
         "total": {k: tot[k].round(2).tolist() for k in kcols},
         "sites": sites_m.astype(int).tolist(),
-        "post": {code: {k: monthly.loc[code].reindex(months).fillna(0.0)[k].round(2).tolist() for k in kcols}
-                 for code in post_vals.index},
+        "post": _post_series(monthly, months, kcols, post_vals.index),
     }
 
     totals = {k: float(pre_vals[k].sum()) for k in kcols}
@@ -373,12 +397,37 @@ def _jitter(x, y, eps=0.003):
     return x, y
 
 
-def _cells(sites, radius_km, by_district, clip="district"):
-    """Return (cells, gaps, areas_union, proj) aligned to `sites` rows."""
-    key = hashlib.md5(
+def _cells_key(sites, radius_km, by_district, clip):
+    return hashlib.md5(
         (",".join(sites["site_id"]) + "|" + ",".join(sites["dist"]) + f"|{radius_km}|{by_district}|{clip}|"
          + f"{sites['latitude'].sum():.6f}{sites['longitude'].sum():.6f}").encode()
     ).hexdigest()
+
+
+# territory of one franchise = union of its sites' cells. Remembered per (cell set, site indices), so after
+# a tag only the franchises whose sites changed are rebuilt.
+_TERR_CACHE = OrderedDict()
+_TERR_CACHE_MAX = 3000
+
+
+def _cached_geom(ckey, kind, idx, cells, proj, tol):
+    """Outline (GeoJSON geometry) of a group of site cells, remembered between runs."""
+    k = (ckey, kind, tol, idx.tobytes())
+    hit = _TERR_CACHE.get(k)
+    if hit is None:
+        f = _to_feature(_dissolve(shapely.union_all(cells[idx])), proj, {}, tol=tol)
+        hit = {"geom": f["geometry"] if f else None}
+        _TERR_CACHE[k] = hit
+        if len(_TERR_CACHE) > _TERR_CACHE_MAX:
+            _TERR_CACHE.popitem(last=False)
+    else:
+        _TERR_CACHE.move_to_end(k)
+    return hit["geom"]
+
+
+def _cells(sites, radius_km, by_district, clip="district"):
+    """Return (cells, gaps, areas_union, proj) aligned to `sites` rows."""
+    key = _cells_key(sites, radius_km, by_district, clip)
     if key in _CELL_CACHE:
         _CELL_CACHE.move_to_end(key)
         return _CELL_CACHE[key]
@@ -499,13 +548,34 @@ def rd_lookup():
     return m or None
 
 
-def rebase_on_rd(df, rd):
-    """RD-based plan: the 'current' franchise of every site becomes its RD Final Franchise; the real
-    current franchise is kept in orig_code (shown on the third map). Sites not in the RD file keep theirs."""
+def rd_prev_lookup():
+    """site_id (upper) -> (previous ex-TP franchise, previous ex-Ufone franchise) from the RD file."""
+    from ..models import RDTag
+    bad = ("", "-", "NAN", "NONE", "#N/A", "0")
+    clean = lambda v: "" if str(v or "").strip().upper() in bad else str(v).strip()  # noqa: E731
+    return {sid.strip().upper(): (clean(tp), clean(uf))
+            for sid, tp, uf in RDTag.objects.values_list("site_id", "prev_tp", "prev_ufone")}
+
+
+def rebase_on_rd(df, rd, prev=None):
+    """RD-based plan.
+    * franchise_code (PRE of the plan) = RD Final Franchise ("RDs proposed"); sites not in the RD file keep theirs.
+    * orig_code (the separate PRE map) = PREVIOUSLY TAG FRANCHISE from the RD file: if only one of ex-TP /
+      ex-Ufone is given, that one; if both, the one matching the site's operator (Telenor -> ex-TP,
+      Ufone -> ex-Ufone). Falls back to the franchise in the site file when the RD file has neither."""
     if df is None or df.empty:
         return df
     df = df.copy()
     df["orig_code"] = df["franchise_code"]
+    if prev:
+        ids0 = df["site_id"].astype(str).str.strip().str.upper()
+
+        def pick(sid, op, cur):
+            tp, uf = prev.get(sid, ("", ""))
+            if tp and uf:
+                return tp if op_kind(op) == "tp" else uf if op_kind(op) == "ufone" else tp
+            return tp or uf or cur
+        df["orig_code"] = [pick(s, o, c) for s, o, c in zip(ids0, df["operator"], df["franchise_code"])]
     if rd:
         ids = df["site_id"].astype(str).str.strip().str.upper()
         fin = ids.map(rd)
@@ -537,6 +607,7 @@ def compute_geometry(latest, radius_km, by_district, color_of, clip="district", 
         return {"pre": empty, "post": empty, "fill_pre": empty, "fill_post": empty, "islands": empty,
                 "districts_in_scope": [], "stats": {}}, [], {}
     cells, gaps, area_union, proj = _cells(sites, radius_km, by_district, clip)
+    ckey = _cells_key(sites, radius_km, by_district, clip)
     pts_km = shapely.points(np.column_stack([sites["longitude"].values * proj.kx, sites["latitude"].values * proj.ky]))
 
     fpos = np.where(fmask)[0]
@@ -555,31 +626,43 @@ def compute_geometry(latest, radius_km, by_district, color_of, clip="district", 
         frag = 0
         for code, rel in fsites.groupby(col).indices.items():
             idx = fpos[rel]
-            terr = _dissolve(shapely.union_all(cells[idx]))
-            gap = shapely.union_all(gaps[idx])
+            tkey = (ckey, idx.tobytes())
+            hit = _TERR_CACHE.get(tkey)
+            if hit is None:
+                terr = _dissolve(shapely.union_all(cells[idx]))
+                gap = shapely.union_all(gaps[idx])
+                parts = [p for p in _parts(terr) if p.area > 0.05]
+                lx = ly = None
+                if parts:
+                    big = max(parts, key=lambda q: q.area)
+                    try:
+                        lp = polylabel(big, tolerance=0.05)
+                    except Exception:
+                        lp = big.representative_point()
+                    lx, ly = round(lp.x / proj.kx, 5), round(lp.y / proj.ky, 5)
+                tf = _to_feature(terr, proj, {})
+                gf = None if gap.is_empty else _to_feature(gap, proj, {})
+                hit = {"terr": terr, "gap_area": gap.area, "n_parts": len(parts), "lx": lx, "ly": ly,
+                       "tgeom": tf["geometry"] if tf else None, "ggeom": gf["geometry"] if gf else None}
+                _TERR_CACHE[tkey] = hit
+                if len(_TERR_CACHE) > _TERR_CACHE_MAX:
+                    _TERR_CACHE.popitem(last=False)
+            else:
+                _TERR_CACHE.move_to_end(tkey)
+            terr = hit["terr"]
             terr_geoms[side][code] = (terr, idx)
-            parts = [p for p in _parts(terr) if p.area > 0.05]
-            frag += max(0, len(parts) - 1)
-            lx = ly = None
-            if parts:
-                big = max(parts, key=lambda q: q.area)
-                try:
-                    lp = polylabel(big, tolerance=0.05)
-                except Exception:
-                    lp = big.representative_point()
-                lx, ly = round(lp.x / proj.kx, 5), round(lp.y / proj.ky, 5)
+            frag += max(0, hit["n_parts"] - 1)
             props = {
                 "code": code, "color": "#9aa3b2" if code == RD_NONE else color_of(code), "sites": int(len(idx)),
-                "area_km2": round(terr.area, 2), "filled_km2": round(gap.area, 2),
-                "covered_km2": round(terr.area - gap.area, 2), "fragments": len(parts), "lx": lx, "ly": ly,
+                "area_km2": round(terr.area, 2), "filled_km2": round(hit["gap_area"], 2),
+                "covered_km2": round(terr.area - hit["gap_area"], 2), "fragments": hit["n_parts"],
+                "lx": hit["lx"], "ly": hit["ly"],
             }
-            f = _to_feature(terr, proj, props)
-            if f:
-                feats.append(f)
-            if not gap.is_empty:
-                f2 = _to_feature(gap, proj, {"code": code, "color": color_of(code), "km2": round(gap.area, 2)})
-                if f2:
-                    fills.append(f2)
+            if hit["tgeom"]:
+                feats.append({"type": "Feature", "properties": props, "geometry": hit["tgeom"]})
+            if hit["ggeom"]:
+                fills.append({"type": "Feature", "properties": {"code": code, "color": color_of(code), "km2": round(hit["gap_area"], 2)},
+                              "geometry": hit["ggeom"]})
         out[side] = _fc(feats)
         out["fill_" + side] = _fc(fills)
         frag_counts[side] = frag
@@ -606,6 +689,12 @@ def compute_geometry(latest, radius_km, by_district, color_of, clip="district", 
     codes = list(post_terr.keys())
     tgeoms = [post_terr[c][0] for c in codes]
     ttree = shapely.STRtree(tgeoms)
+    tbuf = {}  # neighbour territory widened by 20 m, built once per neighbour (was once per pair)
+
+    def widened(j):
+        if j not in tbuf:
+            tbuf[j] = tgeoms[j].buffer(0.02)
+        return tbuf[j]
     for code, (terr, idx) in post_terr.items():
         parts = sorted([p for p in _parts(terr) if p.area > 0.05], key=lambda p: -p.area)
         if len(parts) < 2:
@@ -621,7 +710,7 @@ def compute_geometry(latest, radius_km, by_district, color_of, clip="district", 
                 other = codes[j]
                 if other == code:
                     continue
-                shared = ring.intersection(tgeoms[j].buffer(0.02)).length
+                shared = ring.intersection(widened(j)).length
                 if shared > best_len:
                     best, best_len = other, shared
             enclaves.append({
@@ -658,15 +747,14 @@ def compute_geometry(latest, radius_km, by_district, color_of, clip="district", 
             if not val:
                 continue
             idx = fpos[rel]
-            g = _dissolve(shapely.union_all(cells[idx]))
             sub = sites.iloc[idx]
-            f = _to_feature(g, proj, {
-                "level": level, "name": val, "sites": int(len(idx)),
-                "pre": sorted(sub["franchise_code"].unique().tolist()), "post": sorted(sub["post"].unique().tolist()),
-                "region": sub["region"].mode().iat[0] if len(sub) else "", "bm": sub["bm"].mode().iat[0] if len(sub) else "",
-            }, tol=0.05)
-            if f:
-                feats.append(f)
+            geom = _cached_geom(ckey, "u", idx, cells, proj, 0.05)
+            if geom:
+                feats.append({"type": "Feature", "geometry": geom, "properties": {
+                    "level": level, "name": val, "sites": int(len(idx)),
+                    "pre": sorted(sub["franchise_code"].unique().tolist()), "post": sorted(sub["post"].unique().tolist()),
+                    "region": sub["region"].mode().iat[0] if len(sub) else "", "bm": sub["bm"].mode().iat[0] if len(sub) else "",
+                }})
         out["units"][level] = _fc(feats)
 
     # planned-franchise piece inside each ASM (for the KML hierarchy)
@@ -675,13 +763,13 @@ def compute_geometry(latest, radius_km, by_district, color_of, clip="district", 
         for (arm, code), rel in fsites.groupby(["arm", "post"]).indices.items():
             idx = fpos[rel]
             sub = sites.iloc[idx]
-            f = _to_feature(_dissolve(shapely.union_all(cells[idx])), proj, {
-                "arm": arm, "code": code, "color": color_of(code), "sites": int(len(idx)),
-                "bm": sub["bm"].mode().iat[0], "region": sub["region"].mode().iat[0],
-                "pre": sorted(sub["franchise_code"].unique().tolist()), "site_ids": sub["site_id"].tolist(),
-            }, tol=0.03)
-            if f:
-                feats.append(f)
+            geom = _cached_geom(ckey, "p", idx, cells, proj, 0.03)
+            if geom:
+                feats.append({"type": "Feature", "geometry": geom, "properties": {
+                    "arm": arm, "code": code, "color": color_of(code), "sites": int(len(idx)),
+                    "bm": sub["bm"].mode().iat[0], "region": sub["region"].mode().iat[0],
+                    "pre": sorted(sub["franchise_code"].unique().tolist()), "site_ids": sub["site_id"].tolist(),
+                }})
         out["arm_pieces"] = _fc(feats)
 
     # what lies around the view (grey on the maps): neighbouring cells grouped by planned franchise
@@ -854,8 +942,9 @@ def run(scenario, month_keys=None, regions=None, districts=None, agg="avg", radi
         return {"empty": True, "months": [m.key for m in months]}
     rd = rd_lookup()
     rd_base = getattr(scenario, "base", "own") == "rd"
+    prev = rd_prev_lookup() if rd_base else None
     if rd_base:
-        df = rebase_on_rd(df, rd)
+        df = rebase_on_rd(df, rd, prev)
     mp, ov = mapping_for(scenario)
     df = apply_mapping(df, mp, ov)
     meta, summary, pre_rows, post_rows, series = compute_kpis(df, kcols, scenario, agg, scope_palette(df))
@@ -875,7 +964,7 @@ def run(scenario, month_keys=None, regions=None, districts=None, agg="avg", radi
     if filtered:
         full, _ = load_frame(months, company=company)
         if rd_base:
-            full = rebase_on_rd(full, rd)
+            full = rebase_on_rd(full, rd, prev)
         full = apply_mapping(full, mp, ov)
         # Projections use each planned franchise's Central-B-wide uplift, so the views add up exactly
         _, _, _, g_post, _ = compute_kpis(full, kcols, scenario, agg, {})

@@ -8,6 +8,7 @@
 {% block navright %}
   <input id="scName" class="title-input" value="{{ scenario.name }}" title="Rename scenario">
   <form method="post" action="{% url 'scenario_clone' scenario.pk %}">{% csrf_token %}<button class="btn-ghost sm" title="Copy this plan to try a variant">Clone</button></form>
+  <a class="btn-ghost sm" href="{% url 'maps_page' scenario.pk %}" title="Full-screen maps only, with hierarchy and operator filters">🗺 Maps only</a>
   <a id="btnReport" class="btn sm" href="{% url 'report' scenario.pk %}" title="Merged franchise tables, pre/post maps and complete KML">Report &amp; KML</a>
   <a id="btnXlsx" class="btn-ghost sm" href="#" title="Excel of the current view">Excel</a>
   <a id="btnKml" class="btn-ghost sm" href="#" title="KML of the current view only">KML (view)</a>
@@ -29,7 +30,7 @@
       </div>
       {% if scenario.base == 'rd' and not has_rd %}<span class="warnchip">No RD file uploaded yet — <a href="{% url 'upload' %}#rd">upload it</a>; until then PRE = current franchises.</span>{% endif %}
       <span class="spacer"></span>
-      <span class="sitefind"><input id="siteFind" class="search" placeholder="🔍 Site ID (e.g. FAI0440)" autocomplete="off"><div id="siteHits" class="areahits hidden"></div></span>
+      <span class="sitefind"><input id="siteFind" class="search" placeholder="🔍 Site ID or franchise ID (FID)" autocomplete="off"><div id="siteHits" class="areahits hidden"></div></span>
     </div>
     <div class="ctl nav">
       <span id="companyCtl"></span>
@@ -162,10 +163,10 @@
         <button id="btnPendDiscard" class="btn-ghost sm hidden">Discard</button>
       </div>
 
-      <div class="maps" id="maps">
-        <div class="mapbox"><div class="maptitle" id="preTitle">{% if scenario.base == 'rd' %}PRE · RDs data{% else %}PRE · current{% endif %} <span id="preCount"></span></div><div id="mapPre" class="map"></div></div>
-        <div class="mapbox"><div class="maptitle post-edit">{% if scenario.base == 'rd' %}POST · your changes on RDs{% else %}POST · plan{% endif %} <span id="postCount"></span></div><div id="mapPost" class="map"></div></div>
-        <div class="mapbox hidden" id="rdBox"><div class="maptitle rd">{% if scenario.base == 'rd' %}CURRENT · before RDs{% else %}POST · from RDs{% endif %} <span id="rdCount"></span></div><div id="mapRd" class="map"></div></div>
+      <div class="maps{% if scenario.base == 'rd' %} rdmode{% endif %}" id="maps">
+        <div class="mapbox"><div class="maptitle" id="preTitle">{% if scenario.base == 'rd' %}RDs proposed{% else %}PRE · current{% endif %} <span id="preCount"></span></div><div id="mapPre" class="map"></div></div>
+        <div class="mapbox"><div class="maptitle post-edit">{% if scenario.base == 'rd' %}POST · your changes{% else %}POST · plan{% endif %} <span id="postCount"></span></div><div id="mapPost" class="map"></div></div>
+        <div class="mapbox hidden" id="rdBox"><div class="maptitle rd">{% if scenario.base == 'rd' %}PRE · previously tagged{% else %}POST · from RDs{% endif %} <span id="rdCount"></span></div><div id="mapRd" class="map"></div></div>
       </div>
       <div id="rdBar" class="rdbar hidden"></div>
       <div id="legend" class="legend"></div>
@@ -211,6 +212,6 @@
 {% block scripts %}
 <script src="{% static 'planner/vendor/leaflet.js' %}"></script>
 <script src="{% static 'planner/vendor/chart.umd.min.js' %}"></script>
-<script src="{% static 'planner/sites.js' %}?v=20261115"></script>
-<script src="{% static 'planner/planner.js' %}?v=20261115"></script>
+<script src="{% static 'planner/sites.js' %}?v=20261119"></script>
+<script src="{% static 'planner/planner.js' %}?v=20261119"></script>
 {% endblock %}

@@ -29,6 +29,7 @@ urlpatterns = [
     path("api/areas/", views.api_areas, name="api_areas"),
     path("api/site-search/", views.api_site_search, name="api_site_search"),
     path("scenario/<int:pk>/base/<str:base>/", views.scenario_switch, name="scenario_switch"),
+    path("scenario/<int:pk>/maps/", views.maps_page, name="maps_page"),
     path("api/chunk/", __import__("planner.chunked", fromlist=["api_chunk"]).api_chunk, name="api_chunk"),
     path("api/boundary-check/", views.api_boundary_check, name="api_boundary_check"),
     path("api/boundary-alias/", views.api_boundary_alias, name="api_boundary_alias"),
