@@ -58,8 +58,8 @@
       <label class="small"><input type="checkbox" class="rU" value="district"> District</label>
       <span id="rCmp"></span></div>
     <div class="maps rp-maps">
-      <div class="mapbox"><div class="maptitle">PRE · current <span id="rPreN"></span></div><div id="rMapPre" class="map"></div></div>
-      <div class="mapbox"><div class="maptitle">POST · plan <span id="rPostN"></span></div><div id="rMapPost" class="map"></div></div>
+      <div class="mapbox"><div class="maptitle">{% if scenario.base == 'rd' %}PRE · RDs data{% else %}PRE · current{% endif %} <span id="rPreN"></span></div><div id="rMapPre" class="map"></div></div>
+      <div class="mapbox"><div class="maptitle">{% if scenario.base == 'rd' %}POST · your changes on RDs{% else %}POST · plan{% endif %} <span id="rPostN"></span></div><div id="rMapPost" class="map"></div></div>
     </div>
     <div id="rOutside" class="outside hidden"></div>
   </section>
@@ -93,6 +93,6 @@
 {% endblock %}
 {% block scripts %}
 <script src="{% static 'planner/vendor/leaflet.js' %}"></script>
-<script src="{% static 'planner/sites.js' %}?v=20261112"></script>
-<script src="{% static 'planner/report.js' %}?v=20261112"></script>
+<script src="{% static 'planner/sites.js' %}?v=20261115"></script>
+<script src="{% static 'planner/report.js' %}?v=20261115"></script>
 {% endblock %}

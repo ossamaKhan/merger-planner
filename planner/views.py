@@ -92,8 +92,21 @@ def home(request):
 
 @gated
 def upload(request):
-    result = None
-    if request.method == "POST" and request.FILES.get("file"):
+    result = rd_result = None
+    if request.method == "POST" and request.POST.get("kind") == "rd_clear":
+        from .models import RDTag
+        n = RDTag.objects.count()
+        RDTag.objects.all().delete()
+        messages.info(request, f"Removed the RD file ({n} sites). The POST (from RDs) map is hidden until you upload one again.")
+    elif request.method == "POST" and request.POST.get("kind") == "rd" and request.FILES.get("file"):
+        from .services import rd_import
+        f = request.FILES["file"]
+        try:
+            rd_result = rd_import.import_file(f.read(), f.name)
+            messages.success(request, f"RD file loaded: {rd_result['rows']} sites, {rd_result['franchises']} final franchises. Open a scenario to see the POST (from RDs) map.")
+        except Exception as exc:  # noqa: BLE001
+            messages.error(request, f"RD file import failed: {exc}")
+    elif request.method == "POST" and request.FILES.get("file"):
         f = request.FILES["file"]
         month = importer.parse_month(request.POST.get("month"))
         try:
@@ -110,8 +123,41 @@ def upload(request):
         cov.setdefault(m, {})[r] = n
     coverage = [{"month": m.strftime("%b %Y"), "cells": [cov[m].get(r, 0) for r in regions], "total": sum(cov[m].values())}
                 for m in sorted(cov, reverse=True)]
-    return render(request, "planner/upload.html", {"result": result, "months": DataMonth.objects.all(),
+    from .models import RDTag
+    rd = RDTag.objects.order_by("-uploaded_at").values("source_file", "uploaded_at").first()
+    if rd:
+        rd["sites"] = RDTag.objects.count()
+        rd["franchises"] = RDTag.objects.exclude(final_franchise="").values("final_franchise").distinct().count()
+    return render(request, "planner/upload.html", {"result": result, "rd_result": rd_result, "rd": rd, "months": DataMonth.objects.all(),
                                                    "regions": regions, "coverage": coverage})
+
+
+@gated
+def rd_diff_csv(request, pk):
+    """Sites whose RD Final Franchise differs from this scenario's plan (current view)."""
+    import csv
+    sc = get_object_or_404(Scenario, pk=pk)
+    res = _run(sc, _params(request), with_geometry=False)
+    resp = HttpResponse(content_type="text/csv")
+    resp["Content-Disposition"] = f'attachment; filename="RD_vs_plan_{sc.pk}.csv"'
+    w = csv.writer(resp)
+    if sc.base == "rd":  # RD-based plan: RD Final Franchise (pre) vs your changes (post)
+        w.writerow(["Site", "Operator", "Region", "BM", "ASM", "District", "City", "Area", "Current franchise (before RDs)", "RD Final Franchise (pre)", "Your post", "In RD file", "Status"])
+        for s in res["sites"]:
+            st = "changed by you" if s["post"] != s["pre"] else "same as RD"
+            if request.GET.get("all") or st != "same as RD":
+                w.writerow([s["site_id"], s["operator"], s["region"], s["bm"], s["arm"], s["district"], s["tehsil"], s.get("area", ""),
+                            s.get("rd_post", ""), s["pre"], s["post"], "yes" if s.get("in_rd") else "no", st])
+        return resp
+    w.writerow(["Site", "Operator", "Region", "BM", "ASM", "District", "City", "Area", "Current franchise", "Your plan", "RD Final Franchise", "Status"])
+    for s in res["sites"]:
+        rdv = s.get("rd_post")
+        if rdv is None:
+            continue
+        st = "not in RD file" if rdv == "Not in RD file" else ("same" if rdv == s["post"] else "different")
+        if request.GET.get("all") or st != "same":
+            w.writerow([s["site_id"], s["operator"], s["region"], s["bm"], s["arm"], s["district"], s["tehsil"], s.get("area", ""), s["pre"], s["post"], rdv, st])
+    return resp
 
 
 @gated
@@ -131,6 +177,7 @@ def scenario_create(request):
     sc = Scenario.objects.create(
         name=name, description=request.POST.get("description", ""),
         coverage_km=float(request.POST.get("coverage_km") or 1.0),
+        base="rd" if request.POST.get("base") == "rd" else "own",
     )
     if request.POST.get("seed") == "mocan":
         n_map, n_ov = exports.seed_from_mocan(sc)
@@ -146,7 +193,7 @@ def scenario_clone(request, pk):
         new = Scenario.objects.create(
             name=f"{src.name} (copy)", description=src.description, coverage_km=src.coverage_km,
             fill_within_district=src.fill_within_district, projection_method=src.projection_method,
-            realization_pct=src.realization_pct,
+            realization_pct=src.realization_pct, base=src.base, parent=src.parent,
         )
         FranchiseMapping.objects.bulk_create([FranchiseMapping(scenario=new, source_code=m.source_code, target_code=m.target_code, note=m.note) for m in src.mappings.all()])
         SiteOverride.objects.bulk_create([SiteOverride(scenario=new, site_id=o.site_id, target_code=o.target_code, note=o.note) for o in src.overrides.all()])
@@ -162,8 +209,62 @@ def scenario_delete(request, pk):
 
 @gated
 def planner(request, pk):
+    from .models import RDTag
     sc = get_object_or_404(Scenario, pk=pk)
-    return render(request, "planner/planner.html", {"scenario": sc, "has_data": DataMonth.objects.exists()})
+    return render(request, "planner/planner.html", {"scenario": sc, "has_data": DataMonth.objects.exists(),
+                                                    "has_rd": RDTag.objects.exists()})
+
+
+@gated
+def scenario_switch(request, pk, base):
+    """Selector 'Make your own pre/post' <-> 'Based on RDs data'. Each plan keeps its own changes:
+    the RD-based plan is a linked twin, created the first time."""
+    sc = get_object_or_404(Scenario, pk=pk)
+    base = "rd" if base == "rd" else "own"
+    if sc.base == base:
+        return redirect("planner", pk=sc.pk)
+    if base == "rd":
+        twin = sc.rd_plans.filter(base="rd").order_by("-updated_at").first()
+        if not twin:
+            twin = Scenario.objects.create(name=f"{sc.name} (RD based)", description=sc.description, coverage_km=sc.coverage_km,
+                                           fill_within_district=sc.fill_within_district, projection_method=sc.projection_method,
+                                           realization_pct=sc.realization_pct, base="rd", parent=sc)
+            messages.info(request, "Created the RD-based plan. PRE = the RDs' Final Franchise; make your changes on the POST map. Your own plan is untouched.")
+        return redirect(_keep_q(request, twin.pk))
+    own = sc.parent if sc.parent_id else None
+    if not own:
+        own = Scenario.objects.create(name=sc.name.replace(" (RD based)", "") + " (own)", description=sc.description,
+                                      coverage_km=sc.coverage_km, base="own")
+        sc.parent = own
+        sc.save(update_fields=["parent"])
+    return redirect(_keep_q(request, own.pk))
+
+
+def _keep_q(request, pk):
+    from django.urls import reverse
+    q = request.META.get("QUERY_STRING", "")
+    return reverse("planner", args=[pk]) + (("?" + q) if q else "")
+
+
+@gated
+def api_site_search(request):
+    """Find a site by ID (exact first, then starts-with / contains) with its full hierarchy."""
+    from .services.engine import load_frame, latest_per_site, resolve_months
+    q = (request.GET.get("q") or "").strip()
+    if len(q) < 2:
+        return JsonResponse({"results": []})
+    base = Site.objects.filter(site_id__icontains=q)
+    ids = list(base.values_list("site_id", flat=True).distinct()[:400])
+    ids.sort(key=lambda s: (s.upper() != q.upper(), not s.upper().startswith(q.upper()), len(s), s))
+    ids = ids[:15]
+    out = []
+    for sid in ids:
+        s = Site.objects.filter(site_id=sid).select_related("month").order_by("-month__month").first()
+        out.append({"site_id": s.site_id, "operator": s.operator, "big_region": s.big_region or settings.PLANNER_CIRCLE_NAME,
+                    "region": s.region, "bm": s.bm, "arm": s.arm, "district": s.geo_district or s.district,
+                    "tehsil": s.geo_tehsil, "city": s.city, "franchise": s.franchise_code,
+                    "lat": s.latitude, "lon": s.longitude, "month": s.month.key})
+    return JsonResponse({"results": out})
 
 
 @gated

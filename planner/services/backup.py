@@ -27,7 +27,7 @@ VERSION = 1
 SITE_FIELDS = ["site_id", "operator", "big_region", "region", "bu", "city", "district", "geo_district", "geo_tehsil", "province",
                "franchise_code", "bm", "arm", "latitude", "longitude", "site_type", "status", "mocan_date",
                "franchise_after_mocan", "tp_mocan", "ufone_mocan", "ufone_mocan_fr", "tp_mocan_fr", "kpis"]
-SCEN_FIELDS = ["description", "coverage_km", "fill_within_district", "projection_method", "realization_pct"]
+SCEN_FIELDS = ["description", "coverage_km", "fill_within_district", "projection_method", "realization_pct", "base"]
 
 
 def _jd(v):
@@ -48,6 +48,8 @@ def export_backup(include_data=True):
     }
     from planner.models import AreaName
     plans["area_names"] = list(AreaName.objects.values("name", "city", "latitude", "longitude", "geometry", "source"))
+    from planner.models import RDTag
+    plans["rd_tags"] = list(RDTag.objects.values(*['site_id', 'final_franchise', 'district', 'region', 'prev_tp', 'prev_ufone', 'req_tp', 'req_ufone', 'reason', 'permanence', 'source_file']))
     for sc in Scenario.objects.all():
         plans["scenarios"].append({
             "name": sc.name, **{f: getattr(sc, f) for f in SCEN_FIELDS},
@@ -198,6 +200,12 @@ def restore(raw, filename="", plans_on=True, data_on=True, layers_on=True, same_
                and (a["name"], round(a["latitude"], 5), round(a["longitude"], 5)) not in have]
         AreaName.objects.bulk_create(new)
         summary["area_names"] = len(new)
+        # RD file (replace with the backup's one when it has any)
+        from planner.models import RDTag
+        if plans.get("rd_tags"):
+            RDTag.objects.all().delete()
+            RDTag.objects.bulk_create([RDTag(**{k: (r.get(k) or "") for k in ['site_id', 'final_franchise', 'district', 'region', 'prev_tp', 'prev_ufone', 'req_tp', 'req_ufone', 'reason', 'permanence', 'source_file']}) for r in plans["rd_tags"] if r.get("site_id")], batch_size=1000)
+            summary["rd_tags"] = len(plans["rd_tags"])
         from planner.services import areas as _areas
         _areas.reset()
 

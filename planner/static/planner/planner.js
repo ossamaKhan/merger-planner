@@ -10,6 +10,7 @@
   const csrf = () => ($("input[name=csrfmiddlewaretoken]") || {}).value || "";
   const LS_KEY = `planner:v3:${SC}`;
   const ALL = "__all__";
+  const BASE = app.dataset.base || "own";
 
   const S = {
     filters: null, res: null,
@@ -206,7 +207,7 @@
     const wide = t === "dive";
     if (app.classList.contains("wide-side") !== wide) {
       app.classList.toggle("wide-side", wide);
-      setTimeout(() => { M.pre.map.invalidateSize(); M.post.map.invalidateSize(); }, 50);
+      setTimeout(() => ["pre", "post", "rd"].forEach((k) => M[k].map.invalidateSize()), 50);
     }
   }
   $$("#sideTabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.t)));
@@ -216,8 +217,10 @@
   // Place names (cities, towns, neighbourhoods such as Cantt, Gulgasht) drawn ABOVE the franchise colours
   const nameTiles = () => L.tileLayer("https://{s}.basemap.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png", { subdomains: "abcd", maxZoom: 19, pane: "names" });
   const M = {};
-  ["pre", "post"].forEach((side) => {
-    const map = L.map(side === "pre" ? "mapPre" : "mapPost", { preferCanvas: true, zoomSnap: 0.5 }).setView([30.5, 72.0], 7);
+  // third map, POST (from RDs), only when an RD file is loaded
+  const SIDES = () => (S.res && S.res.rd ? ["pre", "post", "rd"] : ["pre", "post"]);
+  ["pre", "post", "rd"].forEach((side) => {
+    const map = L.map({ pre: "mapPre", post: "mapPost", rd: "mapRd" }[side], { preferCanvas: true, zoomSnap: 0.5 }).setView([30.5, 72.0], 7);
     tiles().addTo(map);
     map.createPane("names"); map.getPane("names").style.zIndex = 450; map.getPane("names").style.pointerEvents = "none";
     map.createPane("areas"); map.getPane("areas").style.zIndex = 640;
@@ -253,7 +256,7 @@
       placed.push([x0 - 14, y0 - 7, x0 + w + 14, y0 + h + 7]);
       keep.push({ ...a, major: big || (a.pop || 0) >= 50000 });
     });
-    ["pre", "post"].forEach((side) => {
+    SIDES().forEach((side) => {
       const g = M[side].areaGroup; g.clearLayers();
       keep.forEach((a) => {
         const cls = a.t === "yours" ? "arealbl yours" : (a.t === "neighbourhood" ? "arealbl nb" : "arealbl town") + (a.major && (a.pop || 0) >= 50000 ? " major" : "");
@@ -318,14 +321,15 @@
   }
   let syncing = false;
   const sync = (a, b) => a.on("move", () => { if (syncing) return; syncing = true; b.setView(a.getCenter(), a.getZoom(), { animate: false }); syncing = false; });
-  sync(M.pre.map, M.post.map); sync(M.post.map, M.pre.map);
+  const syncAll = (a) => a.on("move", () => { if (syncing) return; syncing = true; ["pre", "post", "rd"].forEach((k) => { if (M[k].map !== a) M[k].map.setView(a.getCenter(), a.getZoom(), { animate: false }); }); syncing = false; });
+  ["pre", "post", "rd"].forEach((k) => syncAll(M[k].map));
 
   const boundary = {};
   async function loadBoundaries() {
     for (const lvl of ["districts", "tehsils"]) {
       try { boundary[lvl] = await fetch(`/api/boundaries/${lvl}/`).then((r) => r.json()); } catch (e) { boundary[lvl] = null; }
     }
-    ["pre", "post"].forEach((side) => {
+    SIDES().forEach((side) => {
       const L_ = M[side].layers;
       ["districts", "tehsils"].forEach((lvl) => {
         if (!boundary[lvl]) return;
@@ -339,7 +343,7 @@
   }
   const layerOn = (name) => { const cb = $(`#layerToggles input[data-l="${name}"]`); return cb && cb.checked; };
   function applyToggles() {
-    ["pre", "post"].forEach((side) => {
+    SIDES().forEach((side) => {
       const { map, layers } = M[side];
       Object.entries(layers).forEach(([name, lyr]) => {
         if (!lyr) return;
@@ -350,11 +354,12 @@
   $$("#layerToggles input").forEach((cb) => cb.addEventListener("change", () => { applyToggles(); if (cb.dataset.l === "names") loadAreaLabels(); }));
   $("#btnAddArea").addEventListener("click", startAddArea);
   initAreaFind();
+  initSiteFind();
   $("#btnMapSize").addEventListener("click", () => {
     const big = $("#maps").classList.toggle("big");
     $("#btnMapSize").textContent = big ? "⤡ Smaller maps" : "⤢ Bigger maps";
     if (big) $("#maps").scrollIntoView({ behavior: "smooth", block: "start" });
-    [50, 250, 450].forEach((t) => setTimeout(() => { M.pre.map.invalidateSize(); M.post.map.invalidateSize(); }, t));
+    [50, 250, 450].forEach((t) => setTimeout(() => ["pre", "post", "rd"].forEach((k) => M[k].map.invalidateSize()), t));
   });
 
   function territoryPopup(p, side) {
@@ -386,13 +391,24 @@
     return (withBack ? `<option value="__back__">↩ back to its own franchise</option>` : "") + codeOptions(selected, boardCodes());
   }
   function sitePopup(s) {
-    const k = S.res.meta.primary;
-    return `<div class="pp"><b>${esc(s.site_id)}</b> · ${esc(s.operator)} · ${esc(s.site_type || "")}<br>
-      ${s.area ? `Area: <b>${esc(s.area)}</b>${s.area_src === "near town" ? ' <span class="muted small">(nearest town/village)</span>' : ""}<br>` : ""}
-      ${esc(s.district)} / ${esc(s.tehsil)}<br>
-      Current: <b style="color:${colorOf(s.pre)}">${esc(s.pre)}</b> → Plan: <b style="color:${colorOf(s.post)}">${esc(s.post)}</b>${s.overridden ? ' <span class="tag">moved</span>' : ""}<br>
+    const k = S.res.meta.primary, rcol = S.res.meta.recharge_col;
+    const per = S.agg === "avg" ? "avg / month" : "period total";
+    return `<div class="pp sitepp"><b class="sid">${esc(s.site_id)}</b> · ${esc(s.operator)} · ${esc(s.site_type || "")}${s.status ? " · " + esc(s.status) : ""}
+      <table class="hier">
+        <tr><th>Big Region</th><td>${esc(s.big_region || circle())}</td></tr>
+        <tr><th>Region</th><td>${esc(s.region || "—")}</td></tr>
+        <tr><th>BM</th><td>${esc(s.bm || "—")}</td></tr>
+        <tr><th>ASM</th><td>${esc(s.arm || "—")}</td></tr>
+        <tr><th>District</th><td>${esc(s.district || "—")}</td></tr>
+        <tr><th>City</th><td>${esc(s.tehsil || "—")}</td></tr>
+        <tr><th>Area</th><td>${esc(s.area || "—")}${s.area_src === "near town" ? ' <span class="muted small">(nearest town/village)</span>' : ""}</td></tr>
+        ${rcol ? `<tr class="rc"><th>${esc(rcol)}</th><td><b>${fmt(s.recharge)}</b> <span class="muted small">${per}</span></td></tr>` : ""}
+        ${k && k !== rcol ? `<tr><th>${esc(k)}</th><td>${fmt(s.kpi)}</td></tr>` : ""}
+      </table>
+      ${BASE === "rd" ? "RDs (pre)" : "Current"}: <b style="color:${colorOf(s.pre)}">${esc(s.pre)}</b> → ${BASE === "rd" ? "Your post" : "Plan"}: <b style="color:${colorOf(s.post)}">${esc(s.post)}</b>${s.overridden ? ' <span class="tag">moved</span>' : ""}<br>
+      ${s.rd_post ? (BASE === "rd" ? `Before RDs (current): <b style="color:${colorOf(s.rd_post)}">${esc(s.rd_post)}</b>${s.in_rd === false ? ' <span class="tag">not in RD file</span>' : ""}<br>`
+        : `RD final: <b style="color:${rdColor(s.rd_post)}">${esc(s.rd_post)}</b>${s.rd_post !== RD_NONE && s.rd_post !== s.post ? ' <span class="tag">differs</span>' : ""}<br>`) : ""}
       ${s.franchise_after_mocan ? `After MOCAN (file): ${esc(s.franchise_after_mocan)}<br>` : ""}
-      ${k ? `${esc(k)}: ${fmt(s.kpi)}` : ""}
       <div class="pp-move"><select data-site="${esc(s.site_id)}">${targetOptions(s.post, s.overridden)}</select><button class="btn sm" data-move="${esc(s.site_id)}">Move</button></div></div>`;
   }
   document.addEventListener("click", (e) => {
@@ -405,7 +421,15 @@
   let preByCode = {}, postByCode = {};
   function drawMaps() {
     const r = S.res, g = r.geo;
-    ["pre", "post"].forEach((side) => {
+    const hasRd = !!(r.rd && g.rd);
+    if ($("#maps").classList.contains("three") !== hasRd) {
+      $("#maps").classList.toggle("three", hasRd);
+      $("#rdBox").classList.toggle("hidden", !hasRd);
+      setTimeout(() => ["pre", "post", "rd"].forEach((k) => M[k].map.invalidateSize()), 60);
+    }
+    if (!hasRd) Object.values(M.rd.layers).forEach((l) => l && l !== M.rd.layers.names && l.remove && l.remove());
+    drawRdBar();
+    SIDES().forEach((side) => {
       const { layers } = M[side];
       ["terr", "fill", "islands", "strays", "circles", "sites", "labels", "context", "u_arm", "u_bm", "u_tehsil", "u_district", "u_region"].forEach((n) => { if (layers[n]) layers[n].remove(); layers[n] = null; });
       M[side].markers = {};
@@ -416,6 +440,7 @@
           l.on("click", (ev) => {
             if (side === "post" && S.paint.target) return; // painting: ignore territory clicks
             if (side === "post") { openDive(f.properties.code, false); L.popup().setLatLng(ev.latlng).setContent(territoryPopup(f.properties, side)).openOn(M.post.map); }
+            else if (side === "rd") { highlight(f.properties.code, side, false); L.popup().setLatLng(ev.latlng).setContent(rdTerritoryPopup(f.properties)).openOn(M.rd.map); }
             else { highlight(f.properties.code, side, false); L.popup().setLatLng(ev.latlng).setContent(territoryPopup(f.properties, side)).openOn(M.pre.map); }
           });
         },
@@ -425,11 +450,11 @@
         style: { color: "#c81e1e", weight: 1.6, dashArray: "4 3", fillColor: "#c81e1e", fillOpacity: 0.28 },
         onEachFeature: (f, l) => l.bindPopup(`<b>Uncovered pocket</b><br>${f.properties.km2} km²<br>Nearest site ${esc(f.properties.nearest_site)}<br>Filled by <b>${esc(f.properties.filled_by)}</b>`),
       });
-      const key = side === "post" ? "post" : "pre";
+      const key = { post: "post", pre: "pre", rd: "rd_post" }[side];
       const circles = [], dots = [];
       r.sites.forEach((s) => {
         if (s.latitude == null || s.longitude == null || !OPS.visible(s.operator)) return;
-        const c = colorOf(s[key]);
+        const c = rdColor(s[key]);
         circles.push(L.circle([s.latitude, s.longitude], { radius: S.km * 1000, color: c, weight: 0.6, fillOpacity: 0.06, interactive: false }));
         const m = OPS.marker([s.latitude, s.longitude], s.operator, markerStyle(s, side));
         m.bindTooltip(`${s.site_id} · ${OPS.NAME[OPS.kind(s.operator)]} · ${s[key]}${s.area ? "<br>" + esc(s.area) : ""}`, { className: "tt" });
@@ -442,7 +467,7 @@
       });
       layers.circles = L.layerGroup(circles);
       // island (stray) sites: red rings, on the POST map (and PRE so you can compare)
-      layers.strays = L.layerGroup((r.strays || []).filter((x) => OPS.visible(x.operator)).map((x) =>
+      layers.strays = L.layerGroup((side === "rd" ? [] : r.strays || []).filter((x) => OPS.visible(x.operator)).map((x) =>
         L.circleMarker([x.latitude, x.longitude], { radius: 11, color: "#c81e1e", weight: 2.5, dashArray: "3 2", fill: false })
           .bindTooltip(`<b>Island:</b> ${esc(x.site_id)} (${esc(x.post)})<br>inside ${esc(x.suggest)}'s area · ${x.suggest_n}/${x.k} nearest sites`, { className: "tt" })
           .on("click", () => openStray(x.site_id))));
@@ -471,6 +496,7 @@
     OPS.counts(r.sites);
     $("#preCount").textContent = `${r.summary.pre_franchises} franchises`;
     $("#postCount").textContent = `${r.summary.post_franchises} franchises`;
+    if (hasRd) $("#rdCount").textContent = `${r.rd.franchises} franchises`;
     if (S.fit) { fitScope(); S.fit = false; }
     if (S.dive && postByCode[S.dive]) highlight(S.dive, "post", false);
   }
@@ -494,7 +520,48 @@
     const a = e.target.closest("[data-goarm]"); if (!a) return;
     e.preventDefault(); S.level = "arm"; S.region = ALL; goUnit(a.dataset.goarm);
   });
+  const RD_NONE = "Not in RD file";
+  const rdColor = (code) => (code === RD_NONE ? "#9aa3b2" : colorOf(code));
+  function rdTerritoryPopup(p) {
+    const plan = (S.res.sites || []).filter((s) => s.rd_post === p.code);
+    const same = plan.filter((s) => s.post === p.code).length;
+    const from = {}; plan.forEach((s) => { from[s.pre] = (from[s.pre] || 0) + 1; });
+    return `<div class="pp"><b style="color:${p.color}">${esc(p.code)}</b> <span class="muted small">· RD final franchise</span><br>
+      ${p.sites} sites · ${p.area_km2} km²<br>
+      ${p.code === RD_NONE ? "These sites are in your site file but not in the RD file." : `Same as your plan: <b>${same}</b> of ${plan.length} sites in view<br>
+      Made from: ${Object.entries(from).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${esc(c)} (${n})`).join(", ")}`}</div>`;
+  }
+  function drawRdBar() {
+    const r = S.res, el = $("#rdBar");
+    if (!r.rd) { el.classList.add("hidden"); return; }
+    const d = r.rd;
+    if (d.mode === "rd") {
+      const href = `/scenario/${SC}/rd-vs-plan.csv?${query()}`;
+      el.classList.remove("hidden");
+      el.innerHTML = `<b>Plan based on RDs data</b> <span class="muted small">${d.loaded ? esc(d.file) + " · " + esc(d.uploaded) : "no RD file loaded"}</span>
+        <span class="chip">PRE: ${d.sites} sites from the RD file · ${d.rd_franchises} RD franchises</span>
+        <span class="chip ${d.not_in_rd ? "warn" : ""}" title="Not in the RD file (or no Final Franchise): these keep their current franchise in PRE">${d.not_in_rd} not in RD file (kept current)</span>
+        <span class="chip ${d.differs ? "warn" : ""}" title="Sites whose POST differs from the RD PRE because of your changes">${d.differs} sites changed by you</span>
+        <span class="chip">3rd map: current franchises (${d.franchises})</span>
+        <span class="spacer"></span>
+        <a class="btn-ghost xs" href="${href}">⬇ Your changes vs RDs (CSV)</a>
+        <a class="btn-ghost xs" href="${href}&all=1">⬇ all sites</a>`;
+      return;
+    }
+    const href = `/scenario/${SC}/rd-vs-plan.csv?${query()}`;
+    el.classList.remove("hidden");
+    el.innerHTML = `<b>POST (from RDs)</b> <span class="muted small">${esc(d.file)} · ${esc(d.uploaded)}</span>
+      <span class="chip">${d.sites} sites tagged in this view</span>
+      <span class="chip">${d.franchises} final franchises</span>
+      <span class="chip ${d.differs ? "warn" : ""}" title="RD Final Franchise differs from your plan (POST · plan map)">${d.differs} differ from your plan</span>
+      <span class="chip ${d.not_in_rd ? "warn" : ""}" title="In your site file, but no row (or no Final Franchise) in the RD file — grey on the map">${d.not_in_rd} not in RD file</span>
+      ${d.rd_not_in_data ? `<span class="chip" title="Site IDs in the RD file that are not in your site data, so they cannot be placed on the map">${d.rd_not_in_data} RD sites not in site data</span>` : ""}
+      <span class="spacer"></span>
+      <a class="btn-ghost xs" href="${href}">⬇ RD vs plan (differences)</a>
+      <a class="btn-ghost xs" href="${href}&all=1">⬇ all sites</a>`;
+  }
   function markerStyle(s, side) {
+    if (side === "rd") return { radius: 4, fillColor: OPS.fill(s.operator, rdColor(s.rd_post)), fillOpacity: 0.95, color: s.rd_post !== s.post ? "#111" : "#fff", weight: s.rd_post !== s.post ? 1.6 : 0.8 };
     const pendingTo = side === "post" ? S.pend.get(s.site_id) : undefined;
     if (pendingTo !== undefined) {
       const c = pendingTo === "__back__" ? colorOf(s.pre) : colorOf(pendingTo);
@@ -509,8 +576,8 @@
     if (pts.length) M.post.map.fitBounds(pts, { padding: [20, 20], maxZoom: 13 });
   }
   function highlight(code, side, zoom = true) {
-    const key = side === "post" ? "post" : "pre";
-    ["pre", "post"].forEach((sd) => {
+    const key = { post: "post", pre: "pre", rd: "rd_post" }[side];
+    SIDES().forEach((sd) => {
       const t = M[sd].layers.terr; if (!t) return;
       t.eachLayer((l) => {
         const hit = l.feature.properties.code === code && sd === side;
@@ -524,7 +591,7 @@
     }
   }
   function clearHighlight() {
-    ["pre", "post"].forEach((sd) => { const t = M[sd].layers.terr; if (t) t.eachLayer((l) => l.setStyle({ weight: 1.2, fillOpacity: 0.42 })); });
+    SIDES().forEach((sd) => { const t = M[sd].layers.terr; if (t) t.eachLayer((l) => l.setStyle({ weight: 1.2, fillOpacity: 0.42 })); });
   }
 
   // ------------------------------------------------------------------ site moves (paint on POST map)
@@ -903,6 +970,58 @@
   $("#hierTree").addEventListener("click", (e) => { const a = e.target.closest("[data-hl]"); if (!a) return; e.preventDefault(); if (S.treeSide === "post") openDive(a.dataset.hl); else highlight(a.dataset.hl, "pre"); });
 
   // ------------------------------------------------------------------ issues
+  // ------------------------------------------------------------------ site search
+  let siteT = null, siteHitsList = [];
+  function focusSite(id) {
+    const s = (S.res.sites || []).find((x) => x.site_id === id);
+    if (!s) return false;
+    if (s.latitude == null) { toast(`${esc(id)} has no coordinates.`); return true; }
+    $("#maps").scrollIntoView({ behavior: "smooth", block: "start" });
+    M.post.map.setView([s.latitude, s.longitude], 15);
+    setTimeout(() => {
+      L.popup({ maxWidth: 360, autoPanPaddingTopLeft: L.point(20, 70) }).setLatLng([s.latitude, s.longitude]).setContent(sitePopup(s)).openOn(M.post.map);
+      SIDES().forEach((sd) => {
+        const ring = L.circleMarker([s.latitude, s.longitude], { radius: 16, color: "#ff0080", weight: 3, fill: false, interactive: false }).addTo(M[sd].map);
+        setTimeout(() => ring.remove(), 6000);
+      });
+    }, 350);
+    return true;
+  }
+  function pickSite(x) {
+    $("#siteHits").classList.add("hidden");
+    $("#siteFind").value = x.site_id;
+    if (focusSite(x.site_id)) return;
+    // not in the current view: open that site's ASM (and both companies if needed)
+    if (x.operator && !OPS.visible(x.operator)) { OPS.setCompany("both"); $$("#companyCtl button").forEach((b) => b.classList.toggle("on", b.dataset.v === "both")); }
+    S.region = ALL; S.level = "arm"; S.unit = x.arm || ""; S.fit = false; S.pendingSite = x.site_id;
+    save(); drawNav(); run();
+    toast(`Opening ASM <b>${esc(x.arm || "—")}</b> for ${esc(x.site_id)}…`);
+  }
+  function initSiteFind() {
+    const inp = $("#siteFind"), box = $("#siteHits");
+    const search = async () => {
+      const q = inp.value.trim();
+      if (q.length < 2) { box.classList.add("hidden"); return []; }
+      const res = await fetch(`/api/site-search/?q=${encodeURIComponent(q)}`).then((x) => x.json());
+      siteHitsList = res.results;
+      box.innerHTML = res.results.length ? res.results.map((a, i) => `<div class="hit" data-i="${i}">${OPS.sym(OPS.kind(a.operator), 10)} <b>${esc(a.site_id)}</b>
+          <span class="muted small">${esc(a.franchise)} · ${esc(a.region)} › ${esc(a.bm || "—")} › ${esc(a.arm || "—")} · ${esc(a.tehsil || a.district || "")}</span></div>`).join("")
+        : `<div class="hit muted small">No site matches “${esc(q)}”.</div>`;
+      box.classList.remove("hidden");
+      return res.results;
+    };
+    inp.addEventListener("input", () => { clearTimeout(siteT); siteT = setTimeout(search, 200); });
+    inp.addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      const list = await search();
+      const exact = list.find((a) => a.site_id.toUpperCase() === inp.value.trim().toUpperCase()) || list[0];
+      if (exact) pickSite(exact); else toast("Site not found.");
+    });
+    box.addEventListener("mousedown", (e) => { const h = e.target.closest("[data-i]"); if (h) { e.preventDefault(); pickSite(siteHitsList[+h.dataset.i]); } });
+    inp.addEventListener("blur", () => setTimeout(() => box.classList.add("hidden"), 200));
+  }
+
   // ------------------------------------------------------------------ islands (stray sites)
   S.strayBy = "post";
   function strayHtml(x, i) {
@@ -1230,6 +1349,7 @@
     if (!S.cols) S.cols = defaultCols();
     drawColPicker(); drawNav(); fillTargets(); drawPending();
     drawCards(); drawMaps(); drawLegend(); drawBoard(); drawDive(); drawHierarchy(); drawIssues(); drawStrays(); drawCons(); drawTable(); drawTotals(); drawCharts();
+    if (S.pendingSite) { const id = S.pendingSite; S.pendingSite = null; if (!focusSite(id)) toast(`${esc(id)} isn't in this view (check the Company and Months filters).`); }
     const noXY = res.sites.filter((s) => s.latitude == null).length;
     status(`${esc(viewName())} · ${res.meta.months.length} month(s) · ${fmt(res.summary.sites)} sites · ${res.summary.pre_franchises} → ${res.summary.post_franchises} franchises${noXY ? ` · ${noXY} without coordinates` : ""}`);
   }
@@ -1244,7 +1364,7 @@
       const key = "cmp_" + cb.dataset.cmp;
       if (cb.checked && !M.post.layers[key]) {
         const gj = await api(`/api/layers/${cb.dataset.cmp}/zones/`);
-        ["pre", "post"].forEach((side) => {
+        SIDES().forEach((side) => {
           M[side].layers[key] = L.geoJSON(gj, { style: { color: "#6b2fbf", weight: 2.4, fill: false, opacity: 0.9 },
             onEachFeature: (f, l) => l.bindTooltip(`<b>${esc(f.properties.layer)}</b>: ${esc(f.properties.name)}`, { sticky: true, className: "tt" }) });
         });

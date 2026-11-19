@@ -488,6 +488,43 @@ def _parts(geom):
     return [g for g in getattr(geom, "geoms", []) if g.geom_type == "Polygon"]
 
 
+RD_NONE = "Not in RD file"
+
+
+def rd_lookup():
+    """site_id (upper) -> Final Franchise from the RD file, or None when no RD file is loaded."""
+    from ..models import RDTag
+    rows = RDTag.objects.values_list("site_id", "final_franchise")
+    m = {sid.strip().upper(): (fin or "").strip() for sid, fin in rows}
+    return m or None
+
+
+def rebase_on_rd(df, rd):
+    """RD-based plan: the 'current' franchise of every site becomes its RD Final Franchise; the real
+    current franchise is kept in orig_code (shown on the third map). Sites not in the RD file keep theirs."""
+    if df is None or df.empty:
+        return df
+    df = df.copy()
+    df["orig_code"] = df["franchise_code"]
+    if rd:
+        ids = df["site_id"].astype(str).str.strip().str.upper()
+        fin = ids.map(rd)
+        has = fin.notna() & (fin.astype(str).str.len() > 0)
+        df.loc[has, "franchise_code"] = fin[has]
+        df["in_rd"] = has
+    else:
+        df["in_rd"] = False
+    return df
+
+
+def attach_rd(df, rd):
+    if rd is None or df is None or df.empty:
+        return df
+    df = df.copy()
+    df["rd_post"] = [rd.get(str(x).strip().upper()) or RD_NONE for x in df["site_id"]]
+    return df
+
+
 def compute_geometry(latest, radius_km, by_district, color_of, clip="district", focus_ids=None, pieces=False):
     """`latest` holds ALL sites of the month; Voronoi cells are built from all of them, so
     territories never overlap whatever filter is applied. `focus_ids` are the sites in the
@@ -509,7 +546,10 @@ def compute_geometry(latest, radius_km, by_district, color_of, clip="district", 
     out = {}
     terr_geoms = {}
     frag_counts = {}
-    for side, col in (("pre", "franchise_code"), ("post", "post")):
+    sides = [("pre", "franchise_code"), ("post", "post")]
+    if "rd_post" in fsites.columns:
+        sides.append(("rd", "rd_post"))  # POST (from RDs): Final Franchise from the RD file
+    for side, col in sides:
         feats, fills = [], []
         terr_geoms[side] = {}
         frag = 0
@@ -529,7 +569,7 @@ def compute_geometry(latest, radius_km, by_district, color_of, clip="district", 
                     lp = big.representative_point()
                 lx, ly = round(lp.x / proj.kx, 5), round(lp.y / proj.ky, 5)
             props = {
-                "code": code, "color": color_of(code), "sites": int(len(idx)),
+                "code": code, "color": "#9aa3b2" if code == RD_NONE else color_of(code), "sites": int(len(idx)),
                 "area_km2": round(terr.area, 2), "filled_km2": round(gap.area, 2),
                 "covered_km2": round(terr.area - gap.area, 2), "fragments": len(parts), "lx": lx, "ly": ly,
             }
@@ -812,17 +852,30 @@ def run(scenario, month_keys=None, regions=None, districts=None, agg="avg", radi
     df, kcols = load_frame(months, regions, districts, tehsils, bms, arms, bigs, company)
     if df.empty:
         return {"empty": True, "months": [m.key for m in months]}
+    rd = rd_lookup()
+    rd_base = getattr(scenario, "base", "own") == "rd"
+    if rd_base:
+        df = rebase_on_rd(df, rd)
     mp, ov = mapping_for(scenario)
     df = apply_mapping(df, mp, ov)
     meta, summary, pre_rows, post_rows, series = compute_kpis(df, kcols, scenario, agg, scope_palette(df))
     meta["company"] = {"ufone": "Ufone only", "tp": "TP only"}.get(company, "Ufone + TP")
 
     colors = {r["code"]: r["color"] for r in pre_rows + post_rows}
-    latest = latest_per_site(df)
+    def third(frame):
+        # third map: RD Final Franchise (own plan) / the real current franchise (RD-based plan)
+        if rd_base:
+            frame = frame.copy()
+            frame["rd_post"] = frame["orig_code"]
+            return frame
+        return attach_rd(frame, rd)
+    latest = third(latest_per_site(df))
     filtered = bool(regions or districts or tehsils or bms or arms or bigs)
     full = None
     if filtered:
         full, _ = load_frame(months, company=company)
+        if rd_base:
+            full = rebase_on_rd(full, rd)
         full = apply_mapping(full, mp, ov)
         # Projections use each planned franchise's Central-B-wide uplift, so the views add up exactly
         _, _, _, g_post, _ = compute_kpis(full, kcols, scenario, agg, {})
@@ -836,7 +889,7 @@ def run(scenario, month_keys=None, regions=None, districts=None, agg="avg", radi
         if filtered:
             # Territories always come from ALL sites of the month (cached), so a filtered view
             # can never claim area that belongs to sites outside it.
-            ctx = latest_per_site(full)
+            ctx = third(latest_per_site(full))
             geom, enclaves, _ = compute_geometry(ctx, radius, byd, color_of, clip, focus_ids=set(latest["site_id"]), pieces=pieces)
         else:
             geom, enclaves, _ = compute_geometry(latest, radius, byd, color_of, clip, pieces=pieces)
@@ -854,10 +907,48 @@ def run(scenario, month_keys=None, regions=None, districts=None, agg="avg", radi
     _area_of = dict(zip(latest["site_id"], latest["area"]))
     for x in strays:
         x["area"] = _area_of.get(x["site_id"], "")
+    rd_info = None
+    if rd_base:
+        from ..models import RDTag
+        last = RDTag.objects.order_by("-uploaded_at").values("source_file", "uploaded_at").first() or {}
+        changed = latest[latest["post"] != latest["franchise_code"]]
+        rd_info = {
+            "mode": "rd", "file": last.get("source_file", ""), "uploaded": str(last.get("uploaded_at", ""))[:16],
+            "sites": int(latest["in_rd"].sum()), "not_in_rd": int((~latest["in_rd"]).sum()),
+            "franchises": int(latest["orig_code"].nunique()),
+            "rd_franchises": int(latest.loc[latest["in_rd"], "franchise_code"].nunique()),
+            "differs": int(len(changed)), "rd_not_in_data": 0, "loaded": rd is not None,
+        }
+    elif rd is not None:
+        from ..models import RDTag
+        last = RDTag.objects.order_by("-uploaded_at").values("source_file", "uploaded_at").first() or {}
+        tagged = latest["rd_post"] != RD_NONE
+        in_data = set(str(x).strip().upper() for x in (full if full is not None else df)["site_id"].unique())
+        differs = latest[tagged & (latest["rd_post"] != latest["post"])]
+        rd_info = {
+            "file": last.get("source_file", ""), "uploaded": str(last.get("uploaded_at", ""))[:16],
+            "sites": int(tagged.sum()), "not_in_rd": int((~tagged).sum()),
+            "franchises": int(latest.loc[tagged, "rd_post"].nunique()),
+            "differs": int(len(differs)),
+            "rd_not_in_data": int(sum(1 for k in rd if k not in in_data)), "mode": "own",
+        }
     site_cols = ["site_id", "latitude", "longitude", "operator", "big_region", "region", "dist", "tehsil", "area", "area_src", "franchise_code",
                  "post", "site_type", "status", "bm", "arm", "overridden", "franchise_after_mocan"]
+    if "rd_post" in latest.columns:
+        site_cols.append("rd_post")
     pk = meta["primary"]
+    norm = {c: "".join(ch for ch in str(c).lower() if ch.isalnum()) for c in kcols}
+    rc = next((c for c, n in norm.items() if n == "totalrecharge"), None) or next((c for c, n in norm.items() if "recharge" in n and "rechargers" not in n), None)
+    if rc and rc != pk:
+        site_cols.append(rc)
+    if rd_base:
+        site_cols.append("in_rd")
     sites = latest[site_cols + ([pk] if pk else [])].copy()
+    if rc:
+        sites["recharge"] = latest[rc].values
+        if rc != pk:
+            sites = sites.drop(columns=[rc])
+    meta["recharge_col"] = rc
     sites = sites.rename(columns={"franchise_code": "pre", "dist": "district", pk: "kpi"} if pk else {"franchise_code": "pre", "dist": "district"})
     sites = sites.where(pd.notna(sites), None)
 
@@ -876,6 +967,7 @@ def run(scenario, month_keys=None, regions=None, districts=None, agg="avg", radi
         "series": series,
         "sites": sites.to_dict(orient="records"),
         "strays": strays,
+        "rd": rd_info,
         "geo": geom,
         "enclaves": enclaves,
         "warnings": build_warnings(df, post_rows, latest),

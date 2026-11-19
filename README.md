@@ -85,6 +85,19 @@ Notes
 * **Consolidated IDs (live)** table under the maps: every merged ID with its members, sites,
   Ufone/TP split, KPI now vs projected, grouped by Region / BM / ASM / District / City with
   subtotals. It refreshes after every tag; click a row for its deep dive; CSV download.
+* **Plan selector: "Make your own pre/post" | "Based on RDs data"** (top of the planner, or Plan type
+  when creating a scenario). Based on RDs: PRE = each site's RD Final Franchise, POST = your changes on
+  top (merge board, tagging, islands, report and KML all work the same), third map = the current
+  franchises before RDs. The RD-based plan is a linked copy, so your own plan is never changed.
+  Sites not in the RD file keep their current franchise. CSV: your changes vs RDs.
+* **Site search** (top right): type a site ID and press Enter. It zooms to the site, or opens its ASM if
+  it is outside the view. Clicking any site shows the full hierarchy (Big Region › Region › BM › ASM,
+  District › City › Area) and Total Recharge.
+* **RD file → POST (from RDs) map.** On *Upload data › RD file*, upload the RD tagging sheet
+  (`SERIAL, CELL SITE, …, Final Franchise`). CELL SITE = site ID, Final Franchise = new franchise.
+  The planner then shows a third map with territories by Final Franchise, built from your monthly site
+  file's locations (grey = site not in the RD file). The bar under the maps counts sites that differ
+  from your plan and downloads "RD vs plan" as CSV. Re-uploading replaces it; it is in Backup too.
 * **Company filter (Ufone / TP / Both)** — first control on the planner and report. Ufone shows only
   Ufone sites, their areas (territories rebuilt from Ufone sites alone), KPIs and franchises; TP the
   same for TP; Both is the merged view. Exports (KML/KMZ/Excel) and the report link follow it, and

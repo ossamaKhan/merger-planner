@@ -391,3 +391,25 @@ table.cons tr.tot td { font-weight: 700; border-top: 2px solid #1f2a44; backgrou
 .areahits { position: absolute; z-index: 2000; top: 100%; left: 0; width: 300px; max-height: 300px; overflow: auto; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.12); }
 .areahits .hit { padding: 6px 9px; cursor: pointer; font-size: 12px; } .areahits .hit:hover { background: #fff3e8; }
 .arealbl.major span { font-size: 12.5px; font-weight: 700; color: #111827; letter-spacing: .2px; }
+
+/* third map: POST (from RDs) */
+.maps.three { grid-template-columns: 1fr 1fr 1fr; }
+.maptitle.rd { background: rgba(122,31,162,.92); }
+.rdbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0 2px; padding: 7px 10px; border: 1px solid #e4d4ef; background: #faf5fd; border-radius: 8px; font-size: 12.5px; }
+.rdbar .chip { background: #fff; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
+.rdbar .chip.warn { border-color: #e3b23c; background: #fff8e6; }
+
+/* plan base selector + site search */
+.basebar { gap: 10px; }
+#baseSeg a { padding: 5px 12px; text-decoration: none; color: inherit; display: inline-block; font-weight: 600; font-size: 12.5px; }
+#baseSeg a.on { background: #1f2a44; color: #fff; }
+.warnchip { background: #fff8e6; border: 1px solid #e3b23c; border-radius: 6px; padding: 2px 8px; font-size: 12px; }
+.sitefind { position: relative; display: inline-block; }
+.sitefind input { width: 260px; padding: 5px 9px; font-size: 13px; }
+.sitefind .areahits { width: 440px; right: 0; left: auto; }
+.sitepp .sid { font-size: 14px; }
+.sitepp table.hier { border-collapse: collapse; margin: 6px 0; font-size: 12px; width: 100%; }
+.sitepp table.hier th { text-align: left; color: var(--ink-2, #5b6476); font-weight: 600; padding: 1px 10px 1px 0; white-space: nowrap; vertical-align: top; }
+.sitepp table.hier td { padding: 1px 0; }
+.sitepp table.hier tr.rc td, .sitepp table.hier tr.rc th { color: #0b6e4f; border-top: 1px solid #e3e7ee; padding-top: 3px; }
+.maptitle.post-edit { background: rgba(243,112,33,.95); }

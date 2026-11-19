@@ -88,6 +88,10 @@ class Scenario(models.Model):
     )
     projection_method = models.CharField(max_length=10, choices=PROJECTION_CHOICES, default="best")
     realization_pct = models.FloatField(default=50.0, help_text="% of the productivity gap expected to close")
+    BASE_CHOICES = [("own", "My own pre/post (pre = current franchises)"), ("rd", "Based on RDs data (pre = RD Final Franchise)")]
+    base = models.CharField(max_length=4, choices=BASE_CHOICES, default="own")
+    parent = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="rd_plans",
+                               help_text="For an RD-based plan: the plan it was opened from")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -197,3 +201,20 @@ class UploadChunk(models.Model):
 
     class Meta:
         unique_together = [("token", "idx")]
+
+
+class RDTag(models.Model):
+    """Franchise each site is given in the RD file (the "Final Franchise" column), shown as the POST (from RDs) map."""
+
+    site_id = models.CharField(max_length=64, unique=True)
+    final_franchise = models.CharField(max_length=64, blank=True)
+    district = models.CharField(max_length=120, blank=True)
+    region = models.CharField(max_length=80, blank=True)
+    prev_tp = models.CharField(max_length=64, blank=True)
+    prev_ufone = models.CharField(max_length=64, blank=True)
+    req_tp = models.CharField(max_length=64, blank=True)
+    req_ufone = models.CharField(max_length=64, blank=True)
+    reason = models.CharField(max_length=255, blank=True)
+    permanence = models.CharField(max_length=40, blank=True)
+    source_file = models.CharField(max_length=255, blank=True)
+    uploaded_at = models.DateTimeField(auto_now=True)

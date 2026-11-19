@@ -23,6 +23,27 @@
     </form>
   </div>
 
+  <div class="card" id="rd">
+    <h2>RD file — final franchise per site</h2>
+    <p class="muted">The RD tagging sheet (<code>SERIAL, CELL SITE, … , Final Franchise</code>). <b>CELL SITE</b> is the site ID and
+      <b>Final Franchise</b> is the new franchise. The planner then shows a third map, <b>POST (from RDs)</b>, using the locations, areas and
+      KPIs from your monthly site file. Uploading again replaces the previous RD file.</p>
+    {% if rd %}<p class="small">Loaded: <b>{{ rd.source_file }}</b> · {{ rd.sites }} sites · {{ rd.franchises }} final franchises · {{ rd.uploaded_at|date:"d M Y H:i" }}</p>{% endif %}
+    <form method="post" enctype="multipart/form-data" class="row">
+      {% csrf_token %}<input type="hidden" name="kind" value="rd">
+      <input type="file" name="file" accept=".xlsx,.xlsm,.xls,.csv" required>
+      <button class="btn">Upload RD file</button>
+    </form>
+    {% if rd %}<form method="post" style="margin-top:6px" onsubmit="return confirm('Remove the RD file?')">{% csrf_token %}<input type="hidden" name="kind" value="rd_clear"><button class="btn-ghost xs danger">Remove RD file</button></form>{% endif %}
+    {% if rd_result %}<ul class="kv" style="margin-top:8px">
+      <li><span>Sheet</span><b>{{ rd_result.sheet }}</b></li>
+      <li><span>Sites</span><b>{{ rd_result.rows }}</b></li>
+      <li><span>Final franchises</span><b>{{ rd_result.franchises }}</b></li>
+      {% if rd_result.no_final %}<li><span>Rows without Final Franchise</span><b class="warn">{{ rd_result.no_final }}</b> <span class="muted small">shown as "Not in RD file"</span></li>{% endif %}
+      {% if rd_result.duplicates %}<li><span>Site listed twice</span><b class="warn">{{ rd_result.duplicates }}</b> <span class="muted small">the last row was used</span></li>{% endif %}
+    </ul>{% endif %}
+  </div>
+
   {% if result %}
   <div class="card">
     <h3>Import result</h3>
