@@ -782,22 +782,31 @@ def compute_geometry(latest, radius_km, by_district, color_of, clip="district", 
         hit = cand[shapely.intersects(cells[cand], near)]
         if len(hit):
             ctx = sites.iloc[hit]
-            feats, summ = [], []
-            for code, rel in ctx.groupby("post").indices.items():
-                idx = hit[rel]
-                sub = sites.iloc[idx]
-                arms = sub["arm"].value_counts().index.tolist()
-                bms = sub["bm"].value_counts().index.tolist()
-                tehs = sub["_tehkey"].value_counts().index.tolist()
-                props = {"code": code, "sites": int(len(idx)), "arms": arms[:4], "bms": bms[:3], "tehsils": tehs[:4],
-                         "region": sub["region"].mode().iat[0], "color": color_of(code)}
-                f = _to_feature(shapely.union_all(cells[idx]), proj, props, tol=0.05)
-                if f:
-                    feats.append(f)
-                summ.append(props)
-            out["context"] = _fc(feats)
-            out["context_summary"] = sorted(summ, key=lambda x: -x["sites"])
-            out["context_sites"] = [[r.site_id, round(r.latitude, 5), round(r.longitude, 5), r.post, r.arm, r.bm, r.operator]
+            # one set per map: the grey area is grouped by THAT map's franchise (PRE / POST / third map),
+            # and says whether the franchise is also inside the view (then it is drawn in its colour)
+            for side, col in sides:
+                in_view = set(fsites[col].unique())
+                feats, summ = [], []
+                for code, rel in ctx.groupby(col).indices.items():
+                    idx = hit[rel]
+                    sub = sites.iloc[idx]
+                    arms = sub["arm"].value_counts().index.tolist()
+                    bms = sub["bm"].value_counts().index.tolist()
+                    tehs = sub["_tehkey"].value_counts().index.tolist()
+                    props = {"code": code, "sites": int(len(idx)), "arms": arms[:4], "bms": bms[:3], "tehsils": tehs[:4],
+                             "region": sub["region"].mode().iat[0], "color": "#9aa3b2" if code == RD_NONE else color_of(code),
+                             "in_view": code in in_view}
+                    geom = _cached_geom(ckey, "c", idx, cells, proj, 0.05)
+                    if geom:
+                        feats.append({"type": "Feature", "properties": props, "geometry": geom})
+                    summ.append(props)
+                key = "context" if side == "post" else "context_" + side
+                out[key] = _fc(feats)
+                if side == "post":
+                    out["context_summary"] = sorted(summ, key=lambda x: -x["sites"])
+            has_rd = "rd_post" in ctx.columns
+            out["context_sites"] = [[r.site_id, round(r.latitude, 5), round(r.longitude, 5), r.post, r.arm, r.bm, r.operator,
+                                     r.franchise_code, r.rd_post if has_rd else ""]
                                     for r in ctx.itertuples()]
     return out, enclaves, terr_geoms
 
@@ -969,6 +978,28 @@ def run(scenario, month_keys=None, regions=None, districts=None, agg="avg", radi
         # Projections use each planned franchise's Central-B-wide uplift, so the views add up exactly
         _, _, _, g_post, _ = compute_kpis(full, kcols, scenario, agg, {})
         align_projections(post_rows, summary, meta, g_post, kcols)
+        # Whole franchise (every ASM / BM, both operators unless the Company filter says otherwise):
+        # a franchise's TP and Ufone sites usually sit under different ASMs, so a view shows only part of it.
+        gmap = {r["code"]: r for r in g_post}
+        view_ids = set(df["site_id"])
+        fl = latest_per_site(full)
+        codes_here = {r["code"] for r in post_rows}
+        pk_ = meta["primary"]
+        away = fl[fl["post"].isin(codes_here) & ~fl["site_id"].isin(view_ids)]
+        away_by = {c: g for c, g in away.groupby("post")}
+        for r in post_rows:
+            gr = gmap.get(r["code"])
+            if not gr or gr["sites"] <= r["sites"]:
+                continue
+            a = away_by.get(r["code"])
+            r["whole"] = {k: gr[k] for k in ("sites", "kpis", "projected", "derived", "projected_derived", "operators",
+                                              "members", "districts", "regions", "bms", "arms") if k in gr}
+            r["whole"]["away_sites"] = [] if a is None else [
+                {"site_id": x["site_id"], "operator": x["operator"], "arm": x["arm"], "bm": x["bm"], "region": x["region"],
+                 "district": x["dist"], "tehsil": x["tehsil"], "pre": x["franchise_code"],
+                 "kpi": float(x[pk_]) if pk_ and pk_ in a.columns else None,
+                 "latitude": x["latitude"], "longitude": x["longitude"]}
+                for x in a.to_dict("records")]
     radius = float(radius_km if radius_km is not None else scenario.coverage_km)
     byd = scenario.fill_within_district if by_district is None else by_district
 

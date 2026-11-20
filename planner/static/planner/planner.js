@@ -478,10 +478,15 @@
         interactive: false, icon: L.divIcon({ className: "frlabel", html: `<span style="border-color:${f.properties.color}">${esc(f.properties.code)}</span>`, iconSize: null }),
       })));
       // grey surroundings: what lies outside the current filter
+      // outside the view: this map's own franchise per grey area; a franchise that is also in the view keeps its colour
+      const ci = { post: 3, pre: 7, rd: 8 }[side];
+      const ctxFc = (side === "post" ? g.context : g["context_" + side]) || g.context;
       const ctxDots = (g.context_sites || []).filter((c) => OPS.visible(c[6])).map((c) => OPS.marker([c[1], c[2]], c[6], { radius: 2.6, fillColor: "#8a93a6", fillOpacity: 0.9, color: "#fff", weight: 0.5 })
-        .bindTooltip(`${esc(c[0])} · ${esc(OPS.NAME[OPS.kind(c[6])])} · ${esc(c[3])}<br>ASM ${esc(c[4])} · BM ${esc(c[5])}<br><i>outside this view</i>`, { className: "tt" }));
-      layers.context = L.layerGroup([L.geoJSON(g.context, {
-        style: { color: "#6b7385", weight: 1, dashArray: "3 3", fillColor: "#b8bfcc", fillOpacity: 0.35 },
+        .bindTooltip(`${esc(c[0])} · ${esc(OPS.NAME[OPS.kind(c[6])])} · <b>${esc(c[ci] || c[3])}</b><br>ASM ${esc(c[4])} · BM ${esc(c[5])}<br><i>outside this view</i>`, { className: "tt" }));
+      layers.context = L.layerGroup([L.geoJSON(ctxFc, {
+        style: (f) => (f.properties.in_view
+          ? { color: f.properties.color, weight: 1.4, dashArray: "4 3", fillColor: f.properties.color, fillOpacity: 0.32 }
+          : { color: "#6b7385", weight: 1, dashArray: "3 3", fillColor: "#b8bfcc", fillOpacity: 0.35 }),
         onEachFeature: (f, l) => { const p = f.properties; l.bindTooltip(outsideTip(p), { sticky: true, className: "tt" }); },
       }), ...ctxDots]);
       // hierarchy borders of the view
@@ -503,7 +508,8 @@
     if (S.dive && postByCode[S.dive]) highlight(S.dive, "post", false);
   }
   function outsideTip(p) {
-    return `<b>Outside this view</b><br>${esc(p.code)} · ${p.sites} sites<br>ASM: ${esc(p.arms.join(", "))}<br>BM: ${esc(p.bms.join(", "))}<br>City: ${esc(p.tehsils.join(", "))}`;
+    return `<b style="color:${p.color}">${esc(p.code)}</b> · ${p.sites} site(s) <i>outside this view</i>${p.in_view ? "<br><b>Same franchise as in your view</b> — these sites are in another ASM / BM" : ""}
+      <br>ASM: ${esc(p.arms.join(", "))}<br>BM: ${esc(p.bms.join(", "))}<br>City: ${esc(p.tehsils.join(", "))}`;
   }
   function drawOutside() {
     const cs = S.res.geo.context_summary || [];
@@ -710,7 +716,8 @@
           ${r && r.is_new || !r ? '<span class="tag">new</span>' : ""}
           <span class="spacer"></span>
         </div>
-        ${r ? `<div class="bstat">${fmt(r.sites)} sites · ${b.chips.length} franchise${b.chips.length > 1 ? "s" : ""}${k ? ` · ${esc(k)} ${fmt(r.kpis[k])}` : ""}${proj > 0.05 ? ` <span class="up">${pctTxt(proj)}</span>` : ""}</div>` : '<div class="bstat muted">Empty — drop franchises here</div>'}
+        ${r ? `<div class="bstat">${fmt(r.sites)} sites · ${b.chips.length} franchise${b.chips.length > 1 ? "s" : ""}${k ? ` · ${esc(k)} ${fmt(r.kpis[k])}` : ""}${proj > 0.05 ? ` <span class="up">${pctTxt(proj)}</span>` : ""}</div>
+          ${r.whole ? `<div class="bstat whole" title="Whole franchise: every ASM / BM${OPS.company() === "both" ? ", TP + Ufone" : ""}">Whole franchise: <b>${fmt(r.whole.sites)}</b> sites (TP ${r.whole.operators.Telenor || 0} / Ufone ${r.whole.operators.Ufone || 0})${k ? ` · ${esc(k)} ${fmt(r.whole.kpis[k])}` : ""}</div>` : ""}` : '<div class="bstat muted">Empty — drop franchises here</div>'}
         <div class="bchips">${chips}</div></div>`;
     }).join("") || '<div class="muted pad">No franchises match.</div>';
     $("#btnUndo").disabled = !S.undo.length;
@@ -877,22 +884,31 @@
   function drawDive() {
     const r = S.res; if (!r) return;
     $("#diveSel").innerHTML = `<option value="">— choose a planned franchise —</option>` + [...r.post].sort((a, b) => b.sites - a.sites).map((p) => `<option value="${esc(p.code)}" ${p.code === S.dive ? "selected" : ""}>${esc(p.code)} · ${fmt(p.sites)} sites · ${p.members.length} member(s)</option>`).join("");
-    const p = postByCode[S.dive];
-    if (!p) { $("#dive").innerHTML = '<div class="muted pad">Pick a planned franchise above, or click one on the POST map, the board or the table.</div>'; return; }
+    const pv = postByCode[S.dive];
+    if (!pv) { $("#dive").innerHTML = '<div class="muted pad">Pick a planned franchise above, or click one on the POST map, the board or the table.</div>'; return; }
+    // whole franchise (all ASMs, both operators unless Company says otherwise) vs. just this view
+    const hasWhole = !!pv.whole;
+    const useWhole = hasWhole && S.diveScope !== "view";
+    const p = useWhole ? { ...pv, ...pv.whole } : pv;
     const k = r.meta.primary;
     const mem = p.members.slice(0, 4);
     const rest = p.members.slice(4);
     const kpiRows = [...r.meta.kpis.map((x) => ({ label: x.label, get: (o) => o.kpis[x.key], proj: p.projected[x.key], tr: p.trend_next[x.key], lb: x.lower_better })),
       ...r.meta.derived.map((d) => ({ label: d.label, get: (o) => o.derived[d.label], proj: p.projected_derived[d.label], tr: null, lb: d.lower_better, der: true }))];
-    const sites = r.sites.filter((s) => s.post === p.code);
+    const sites = r.sites.filter((s) => s.post === p.code).concat(useWhole ? (pv.whole.away_sites || []).map((s) => ({ ...s, post: p.code, away: true })) : []);
     const teh = {}; sites.forEach((s) => { teh[`${s.district} / ${s.tehsil}`] = (teh[`${s.district} / ${s.tehsil}`] || 0) + 1; });
     const ops = p.operators;
+    const scopeBar = hasWhole ? `<div class="dscope"><div class="seg small-seg" id="diveScope">
+        <button data-v="whole" class="${useWhole ? "on" : ""}">Whole franchise · ${fmt(pv.whole.sites)} sites</button>
+        <button data-v="view" class="${useWhole ? "" : "on"}">This view only · ${fmt(pv.sites)} sites</button></div>
+        <div class="muted small">${useWhole ? `Includes ${fmt(pv.whole.sites - pv.sites)} site(s) outside this view (other ASMs / BMs${OPS.company() === "both" ? ", both operators" : ""}).` : "Only the sites inside the current view."}</div></div>` : "";
     $("#dive").innerHTML = `
       <div class="dhead" style="--c:${p.color}"><span class="sw lg" style="background:${p.color}"></span><div><div class="dcode">${esc(p.code)} ${p.is_new ? '<span class="tag">new</span>' : ""}</div>
         <div class="muted small">${esc(p.districts.join(", "))} · ${esc(p.regions.join(", "))}</div></div>
         <span class="spacer"></span><button class="btn-ghost xs" id="diveZoom">⌖ Zoom</button></div>
+      ${scopeBar}
       <div class="dstats">
-        <div><b>${fmt(p.sites)}</b><span>sites</span></div>
+        <div><b>${fmt(p.sites)}</b><span>sites${useWhole ? " (whole franchise)" : ""}</span></div>
         <div><b>${p.members.length}</b><span>franchises merged</span></div>
         <div><b>${ops.Telenor || 0} / ${ops.Ufone || 0}</b><span>TP / Ufone sites</span></div>
         ${k ? `<div><b>${fmt(p.kpis[k])}</b><span>${esc(k)}</span></div><div><b class="up">${fmt(p.projected[k])}</b><span>projected ${pctTxt(pct(p.projected[k], p.kpis[k]))}</span></div>` : ""}
@@ -919,12 +935,14 @@
         <select id="dTarget">${targetOptions(null, true)}</select><button class="btn sm" id="dMove">Move ticked sites</button></div>
       <div class="tblwrap dive-sites"><table class="tbl compact" id="dSites"><thead><tr><th></th><th>Site</th><th>Op</th><th>From</th><th>Tehsil</th>${k ? `<th class="r">${esc(k)}</th>` : ""}</tr></thead><tbody>
         ${sites.sort((a, b) => (b.kpi || 0) - (a.kpi || 0)).map((s) => `<tr><td><input type="checkbox" data-sid="${esc(s.site_id)}"></td>
-          <td><a href="#" data-site-zoom="${esc(s.site_id)}">${esc(s.site_id)}</a>${s.overridden ? ' <span class="tag">moved</span>' : ""}</td>
+          <td><a href="#" data-site-zoom="${esc(s.site_id)}">${esc(s.site_id)}</a>${s.overridden ? ' <span class="tag">moved</span>' : ""}${s.away ? ` <span class="tag away" title="Outside this view: ASM ${esc(s.arm)}">ASM ${esc(s.arm)}</span>` : ""}</td>
           <td>${esc((s.operator || "").slice(0, 2).toUpperCase())}</td><td><span class="sw" style="background:${colorOf(s.pre)}"></span>${esc(s.pre)}</td>
           <td class="small">${esc(s.tehsil)}</td>${k ? `<td class="r">${fmt(s.kpi)}</td>` : ""}</tr>`).join("")}</tbody></table></div>`;
     $("#dTarget").value = boardCodes().find((c) => c !== p.code) || "__back__";
   }
   $("#dive").addEventListener("click", (e) => {
+    const sc = e.target.closest("#diveScope button");
+    if (sc) { S.diveScope = sc.dataset.v; drawDive(); return; }
     if (e.target.id === "diveZoom") highlight(S.dive, "post", true);
     if (e.target.id === "dAll") $$("#dSites input[data-sid]").forEach((c) => { c.checked = e.target.checked; });
     if (e.target.id === "dMove") {
@@ -936,7 +954,8 @@
     const z = e.target.closest("[data-site-zoom]");
     if (z) {
       e.preventDefault();
-      const s = S.res.sites.find((x) => x.site_id === z.dataset.siteZoom);
+      const pv2 = postByCode[S.dive];
+      const s = S.res.sites.find((x) => x.site_id === z.dataset.siteZoom) || ((pv2 && pv2.whole && pv2.whole.away_sites) || []).find((x) => x.site_id === z.dataset.siteZoom);
       if (s && s.latitude != null) { M.post.map.setView([s.latitude, s.longitude], 14); const mk = M.post.markers[s.site_id]; if (mk) L.popup().setLatLng(mk.getLatLng()).setContent(sitePopup(s)).openOn(M.post.map); }
     }
   });
@@ -1162,7 +1181,7 @@
     const pct = (a, b) => (b ? ((a - b) / Math.abs(b)) * 100 : 0);
     const groups = {};
     rows.forEach((x) => (groups[x.group] ||= []).push(x));
-    const head = `<thead><tr><th>${lvName ? lvName + " › " : ""}Consolidated ID</th><th>Merged from (current IDs)</th><th>Main areas</th><th class="num">Sites</th><th class="num">Ufone / TP</th>
+    const head = `<thead><tr><th>${lvName ? lvName + " › " : ""}Consolidated ID</th><th>Merged from (current IDs)</th><th>Main areas</th><th class="num">Sites</th><th class="num">Ufone / TP</th><th class="num" title="Every ASM / BM; both operators when Company = Both">Whole franchise</th>
       ${k ? `<th class="num">${esc(k)} now</th><th class="num">Projected</th><th class="num">Uplift</th><th class="num">${esc(k)} / site</th>` : ""}
       ${lvName ? `<th>Also in other ${esc(lvName)}s</th>` : ""}</tr></thead>`;
     const frRow = (x) => {
@@ -1171,25 +1190,26 @@
         <td><div class="mem">${p.members.map((m) => `<span class="code-chip" title="${fmt(m.sites)} sites"><span class="sw" style="background:${m.color}"></span>${esc(m.code)} <span class="muted">${fmt(m.sites)}</span></span>`).join("")}</div></td>
         <td class="small">${x.areasTop.map(([a, n]) => `${esc(a)} <span class="muted">${n}</span>`).join(", ") || '<span class="muted">—</span>'}</td>
         <td class="num">${fmt(p.sites)}</td><td class="num">${x.ops.ufone} / ${x.ops.tp}</td>
+        <td class="num">${p.whole ? `<b>${fmt(p.whole.sites)}</b> <span class="muted">(${p.whole.operators.Ufone || 0} / ${p.whole.operators.Telenor || 0})</span>` : '<span class="muted">same</span>'}</td>
         ${k ? `<td class="num">${fmt(x.cur)}</td><td class="num">${fmt(x.proj)}</td><td class="num ${up > 0.05 ? "up" : ""}">${up > 0.05 ? "+" + up.toFixed(1) + "%" : "—"}</td><td class="num">${fmt(p.sites ? x.cur / p.sites : 0)}</td>` : ""}
         ${lvName ? `<td class="small">${x.parts.slice(1).map(([v, n]) => `${esc(v)} (${n})`).join(", ") || '<span class="muted">—</span>'}</td>` : ""}</tr>`;
     };
     const sum = (xs, f) => xs.reduce((a, x) => a + (f(x) || 0), 0);
-    const ncol = 5 + (k ? 4 : 0) + (lvName ? 1 : 0);
+    const ncol = 6 + (k ? 4 : 0) + (lvName ? 1 : 0);
     let body = "";
     Object.entries(groups).sort((a, b) => sum(b[1], (x) => x.p.sites) - sum(a[1], (x) => x.p.sites)).forEach(([g, xs]) => {
       xs.sort((a, b) => b.p.sites - a.p.sites);
       if (lvName) {
         const c = sum(xs, (x) => x.cur), pj = sum(xs, (x) => x.proj);
         body += `<tr class="grp"><td>${esc(lvName)}: ${esc(g)}</td><td><span class="muted">${xs.length} consolidated ID(s) · ${sum(xs, (x) => x.p.members.length)} merged</span></td><td></td>
-          <td class="num">${fmt(sum(xs, (x) => x.p.sites))}</td><td class="num">${sum(xs, (x) => x.ops.ufone)} / ${sum(xs, (x) => x.ops.tp)}</td>
+          <td class="num">${fmt(sum(xs, (x) => x.p.sites))}</td><td class="num">${sum(xs, (x) => x.ops.ufone)} / ${sum(xs, (x) => x.ops.tp)}</td><td></td>
           ${k ? `<td class="num">${fmt(c)}</td><td class="num">${fmt(pj)}</td><td class="num">${pct(pj, c) > 0.05 ? "+" + pct(pj, c).toFixed(1) + "%" : "—"}</td><td></td>` : ""}<td></td></tr>`;
       }
       body += xs.map(frRow).join("");
     });
     if (rows.length) {
       const c = sum(rows, (x) => x.cur), pj = sum(rows, (x) => x.proj);
-      body += `<tr class="tot"><td>Total</td><td>${rows.length} ID(s)</td><td></td><td class="num">${fmt(sum(rows, (x) => x.p.sites))}</td><td class="num">${sum(rows, (x) => x.ops.ufone)} / ${sum(rows, (x) => x.ops.tp)}</td>
+      body += `<tr class="tot"><td>Total</td><td>${rows.length} ID(s)</td><td></td><td class="num">${fmt(sum(rows, (x) => x.p.sites))}</td><td class="num">${sum(rows, (x) => x.ops.ufone)} / ${sum(rows, (x) => x.ops.tp)}</td><td></td>
         ${k ? `<td class="num">${fmt(c)}</td><td class="num">${fmt(pj)}</td><td class="num">${pct(pj, c) > 0.05 ? "+" + pct(pj, c).toFixed(1) + "%" : "—"}</td><td></td>` : ""}${lvName ? "<td></td>" : ""}</tr>`;
     } else body = `<tr><td colspan="${ncol}" class="muted">No consolidated IDs in this view yet — drag a franchise onto another on the Merge board (or tick “also single IDs”).</td></tr>`;
     $("#consTable").innerHTML = head + "<tbody>" + body + "</tbody>";

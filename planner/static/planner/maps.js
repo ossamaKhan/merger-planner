@@ -99,6 +99,7 @@
     if (r.empty || r.error) { $("#status").textContent = r.error || "No data for this selection."; return; }
     res = r;
     drawToggles(); layout(); draw();
+    if (pending) { const f = pending; pending = null; setTimeout(() => { if (!f()) $("#status").textContent = "Not on these maps (check the Company filter)."; }, 250); return; }
     const f = F.filter(([id]) => st.f[id]).map(([id, , n]) => st.f[id]);
     $("#status").textContent = `${f.length ? f.join(" › ") : CIRCLE + " — all"} · ${r.sites.length} sites`;
   }
@@ -128,8 +129,19 @@
       const o = M[d.id]; o.group.clearLayers();
       const fc = g[d.geo];
       if (!fc) { o.box.querySelector(".cnt").textContent = ""; return; }
-      if (g.context && (g.context.features || []).length) {
-        o.group.addLayer(L.geoJSON(g.context, { interactive: false, style: { color: "#b6bdca", weight: 0.6, fillColor: "#cfd4de", fillOpacity: 0.35 } }));
+      const ctxFc = (d.geo === "post" ? g.context : g["context_" + d.geo]) || g.context;
+      if (ctxFc && (ctxFc.features || []).length) {
+        o.group.addLayer(L.geoJSON(ctxFc, {
+          style: (f) => (f.properties.in_view
+            ? { color: f.properties.color, weight: 1.2, dashArray: "4 3", fillColor: f.properties.color, fillOpacity: 0.32 }
+            : { color: "#8a93a6", weight: 0.8, dashArray: "3 3", fillColor: "#cfd4de", fillOpacity: 0.4 }),
+          onEachFeature: (f, l) => {
+            const p = f.properties;
+            l.bindTooltip(`<b style="color:${p.color}">${esc(p.code)}</b> · ${p.sites} site(s) <i>outside this filter</i>`
+              + (p.in_view ? "<br><b>Same franchise as in your filter</b> — these sites are in another ASM / BM" : "")
+              + `<br>Region: ${esc(p.region)}<br>ASM: ${esc((p.arms || []).join(", "))}<br>BM: ${esc((p.bms || []).join(", "))}<br>City: ${esc((p.tehsils || []).join(", "))}`, { sticky: true, className: "tt" });
+          },
+        }));
       }
       const terr = L.geoJSON(fc, {
         style: (f) => ({ color: "#ffffff", weight: 1.2, fillColor: f.properties.color, fillOpacity: 0.55 }),
@@ -150,6 +162,70 @@
     if (!fitted && all.isValid()) { fitted = true; const first = M[visibleIds()[0]]; setTimeout(() => first.map.fitBounds(all.pad(0.03)), 80); }
   }
   window.addEventListener("resize", () => Object.values(M).forEach((o) => o.map.invalidateSize()));
+
+  // ---- search: site IDs and franchise IDs (incl. previous / requested ones from the RD file)
+  let pending = null, hits = [], findT = null;
+  const ring = (ll) => visibleIds().forEach((id) => {
+    const c = L.circleMarker(ll, { radius: 16, color: "#ff0080", weight: 3, fill: false, interactive: false }).addTo(M[id].map);
+    setTimeout(() => c.remove(), 6000);
+  });
+  function focusSite(id) {
+    const s = res && res.sites.find((x) => x.site_id === id);
+    if (!s || s.latitude == null) return false;
+    const first = M[visibleIds()[0]];
+    first.map.setView([s.latitude, s.longitude], 15);
+    setTimeout(() => { L.popup({ maxWidth: 340 }).setLatLng([s.latitude, s.longitude]).setContent(popup(s)).openOn(first.map); ring([s.latitude, s.longitude]); }, 300);
+    return true;
+  }
+  function focusFr(code) {
+    if (!res) return false;
+    const b = L.latLngBounds([]), where = [];
+    DEFS.forEach((d) => {
+      if (!visibleIds().includes(d.id)) return;
+      const feats = ((res.geo[d.geo] || {}).features || []).filter((f) => f.properties.code === code);
+      if (!feats.length) return;
+      where.push(d.title);
+      const lay = L.geoJSON({ type: "FeatureCollection", features: feats }, { interactive: false, style: { color: "#ff0080", weight: 4, fill: false, dashArray: "6 4" } }).addTo(M[d.id].map);
+      b.extend(lay.getBounds()); setTimeout(() => lay.remove(), 8000);
+    });
+    if (!b.isValid()) return false;
+    M[visibleIds()[0]].map.fitBounds(b.pad(0.15));
+    $("#status").textContent = `${code} outlined in pink on: ${where.join(", ")}`;
+    return true;
+  }
+  function openAsm(arm, then) {
+    if (!arm) { $("#status").textContent = "Not on any map: none of its sites are in your site data."; return; }
+    st.f = { fArm: arm }; save(); drawFilters(); fitted = true; pending = then; run();
+    $("#status").textContent = `Opening ASM ${arm}…`;
+  }
+  function pick(x) {
+    $("#mHits").classList.add("hidden");
+    if (x.kind === "fid") { $("#mFind").value = x.code; if (!focusFr(x.code)) openAsm(x.arm, () => focusFr(x.code)); }
+    else { $("#mFind").value = x.site_id; if (!OPS.visible(x.operator)) OPS.setCompany("both"); if (!focusSite(x.site_id)) openAsm(x.arm, () => focusSite(x.site_id)); }
+  }
+  async function search() {
+    const q = $("#mFind").value.trim(), box = $("#mHits");
+    if (q.length < 2) { box.classList.add("hidden"); return []; }
+    const r = await fetch(`/api/site-search/?q=${encodeURIComponent(q)}`).then((x) => x.json());
+    hits = (r.franchises || []).map((f) => ({ ...f, kind: "fid" })).concat(r.results.map((s) => ({ ...s, kind: "site" })));
+    box.innerHTML = hits.length ? hits.map((h, i) => h.kind === "fid"
+      ? `<div class="hit" data-i="${i}">🏷 <b>${esc(h.code)}</b> <span class="muted small">${h.tags.map(esc).join(" · ")} · ${h.sites} site(s)${h.arm ? " · " + esc(h.arm) : ""}</span></div>`
+      : `<div class="hit" data-i="${i}">${OPS.sym(OPS.kind(h.operator), 10)} <b>${esc(h.site_id)}</b> <span class="muted small">${esc(h.franchise)} · ${esc(h.region)} › ${esc(h.bm || "—")} › ${esc(h.arm || "—")}</span></div>`).join("")
+      : `<div class="hit muted small">No site or franchise matches “${esc(q)}”.</div>`;
+    box.classList.remove("hidden");
+    return hits;
+  }
+  $("#mFind").addEventListener("input", () => { clearTimeout(findT); findT = setTimeout(search, 200); });
+  $("#mFind").addEventListener("keydown", async (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const list = await search(), v = $("#mFind").value.trim().toUpperCase();
+    const exact = list.find((h) => (h.kind === "fid" ? h.code : h.site_id).toUpperCase() === v) || list[0];
+    if (exact) pick(exact);
+  });
+  $("#mHits").addEventListener("mousedown", (e) => { const h = e.target.closest("[data-i]"); if (h) { e.preventDefault(); pick(hits[+h.dataset.i]); } });
+  $("#mFind").addEventListener("blur", () => setTimeout(() => $("#mHits").classList.add("hidden"), 200));
+  window.__plannerMaps = M; // handy for support / testing
 
   fetch("/api/filters/").then((x) => x.json()).then((f) => { combos = f.combos || []; drawFilters(); run(); });
 })();

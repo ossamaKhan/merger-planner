@@ -1,3 +1,16 @@
+/* Pop-ups and hover tips never get cut off at the map edge: pop-ups pan the map into view (clear of the
+   title bar), scroll when taller than the map, and tips open on whichever side has room. */
+if (window.L) {
+  L.Popup.mergeOptions({ autoPan: true, autoPanPaddingTopLeft: L.point(12, 64), autoPanPaddingBottomRight: L.point(12, 12), maxWidth: 340, keepInView: true });
+  L.Tooltip.mergeOptions({ direction: "auto" });
+  L.Map.addInitHook(function () {
+    this.on("popupopen", (e) => {
+      const h = this.getSize().y, el = e.popup.getElement && e.popup.getElement();
+      const box = el && el.querySelector(".leaflet-popup-content");
+      if (box) { box.style.maxHeight = Math.max(160, h - 110) + "px"; box.style.overflowY = "auto"; e.popup.update(); }
+    });
+  });
+}
 /* Shared site symbols: Ufone = circle, TP (Telenor) = triangle, other = square.
    Show Both / Ufone / TP, and colour by franchise or by operator. Remembered per browser. */
 window.OPS = (() => {

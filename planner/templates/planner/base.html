@@ -6,7 +6,7 @@
   <title>{% block title %}Franchise Planner{% endblock %} · MergeCo</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{% static 'planner/planner.css' %}?v=20261119">
+  <link rel="stylesheet" href="{% static 'planner/planner.css' %}?v=20261120b">
   {% block head %}{% endblock %}
 </head>
 <body class="{% block bodyclass %}{% endblock %}">
@@ -23,7 +23,7 @@
 </nav>
 {% if messages %}<div class="flash-wrap">{% for m in messages %}<div class="flash flash-{{ m.tags }}">{{ m }}</div>{% endfor %}</div>{% endif %}
 {% block content %}{% endblock %}
-<script src="{% static 'planner/chunked.js' %}?v=20261119"></script>
+<script src="{% static 'planner/chunked.js' %}?v=20261120b"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

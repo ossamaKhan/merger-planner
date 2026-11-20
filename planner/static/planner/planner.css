@@ -418,3 +418,10 @@ table.cons tr.tot td { font-weight: 700; border-top: 2px solid #1f2a44; backgrou
 .maps.rdmode #rdBox { order: -1; }
 .maps.rdmode .maptitle.rd { background: rgba(31,42,68,.92); }
 .areahits .hit-h { padding: 5px 9px 2px; font: 700 10.5px var(--sans, system-ui); letter-spacing: .06em; text-transform: uppercase; color: #8a93a6; }
+
+/* hover tips: wrap long lines instead of running off the map */
+.leaflet-tooltip.tt { white-space: normal; max-width: 300px; }
+
+.dscope { margin: 6px 0 8px; display: flex; flex-direction: column; gap: 4px; }
+.tag.away { background: #eef1f7; color: #4a5468; }
+.bstat.whole { color: #0b6e4f; font-size: 11.5px; }

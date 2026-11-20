@@ -75,9 +75,11 @@
       const dots = L.layerGroup(r.sites.filter((s) => s.latitude != null && OPS.visible(s.operator)).map((s) => OPS.marker([s.latitude, s.longitude], s.operator,
         { radius: 3.4, fillColor: OPS.fill(s.operator, color[s[key]] || "#888"), fillOpacity: 0.95, color: "#fff", weight: 0.7 }).bindTooltip(`${s.site_id} · ${OPS.NAME[OPS.kind(s.operator)]} · ${s[key]}`)));
       const labels = L.layerGroup(r.geo[side].features.filter((f) => f.properties.ly != null).map((f) => L.marker([f.properties.ly, f.properties.lx], { interactive: false, icon: L.divIcon({ className: "frlabel", html: `<span style="border-color:${f.properties.color}">${esc(f.properties.code)}</span>`, iconSize: null }) })));
-      const ctx = L.geoJSON(r.geo.context || { type: "FeatureCollection", features: [] }, {
-        style: { color: "#6b7385", weight: 1, dashArray: "3 3", fillColor: "#b8bfcc", fillOpacity: 0.35 },
-        onEachFeature: (f, l) => { const p = f.properties; l.bindTooltip(`<b>Outside this view</b><br>${esc(p.code)} · ${p.sites} sites<br>ASM: ${esc(p.arms.join(", "))}<br>BM: ${esc(p.bms.join(", "))}<br>City: ${esc(p.tehsils.join(", "))}`, { sticky: true }); },
+      const ctx = L.geoJSON((side === "post" ? r.geo.context : r.geo["context_" + side]) || r.geo.context || { type: "FeatureCollection", features: [] }, {
+        style: (f) => (f.properties.in_view
+          ? { color: f.properties.color, weight: 1.4, dashArray: "4 3", fillColor: f.properties.color, fillOpacity: 0.32 }
+          : { color: "#6b7385", weight: 1, dashArray: "3 3", fillColor: "#b8bfcc", fillOpacity: 0.35 }),
+        onEachFeature: (f, l) => { const p = f.properties; l.bindTooltip(`<b style="color:${p.color}">${esc(p.code)}</b> · ${p.sites} sites <i>outside this view</i>${p.in_view ? "<br><b>Same franchise as in your view</b>" : ""}<br>ASM: ${esc(p.arms.join(", "))}<br>BM: ${esc(p.bms.join(", "))}<br>City: ${esc(p.tehsils.join(", "))}`, { sticky: true, className: "tt" }); },
       }).addTo(map);
       ctx.bringToBack();
       const units = {};

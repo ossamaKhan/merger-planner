@@ -3,7 +3,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ scenario.name }} · Maps</title>
 <link rel="stylesheet" href="{% static 'planner/vendor/leaflet.css' %}">
-<link rel="stylesheet" href="{% static 'planner/planner.css' %}?v=20261119">
+<link rel="stylesheet" href="{% static 'planner/planner.css' %}?v=20261120b">
 <style>
   html, body { height: 100%; margin: 0; }
   body { display: flex; flex-direction: column; background: #eef1f6; font-family: Inter, system-ui, Arial, sans-serif; overflow: hidden; }
@@ -24,12 +24,15 @@
   .mbox.hidden { display: none; }
   .mbox .map { position: absolute; inset: 0; }
   .mbox .maptitle { position: absolute; z-index: 800; left: 54px; top: 10px; }
+  .mfind input { width: 230px; padding: 4px 8px; border-radius: 6px; border: 0; font-size: 12.5px; }
+  .mfind .areahits { left: 0; right: auto; width: 440px; color: #1f2a44; z-index: 3000; }
 </style>
 </head>
 <body>
 <div class="mbar">
   <a class="back" href="{% url 'planner' scenario.pk %}" title="Back to the planner">← Planner</a>
   <span class="ttl">{{ scenario.name }}</span>
+  <span class="sitefind mfind"><input id="mFind" placeholder="🔍 Site ID or franchise ID" autocomplete="off"><div id="mHits" class="areahits hidden"></div></span>
   <span class="sep"></span>
   <span class="lbl">Maps</span>
   <span class="maptog" id="mapTog"></span>
@@ -49,6 +52,6 @@
 <div id="grid" class="n3"
      data-scenario="{{ scenario.pk }}" data-base="{{ scenario.base }}" data-circle="{{ circle }}"></div>
 <script src="{% static 'planner/vendor/leaflet.js' %}"></script>
-<script src="{% static 'planner/sites.js' %}?v=20261119"></script>
-<script src="{% static 'planner/maps.js' %}?v=20261119"></script>
+<script src="{% static 'planner/sites.js' %}?v=20261120b"></script>
+<script src="{% static 'planner/maps.js' %}?v=20261120b"></script>
 </body></html>
